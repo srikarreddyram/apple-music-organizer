@@ -127,7 +127,10 @@ def split_ops(lib, playlist, min_size=10, used=None, min_family=4, rare=0.15, do
     # Fold buckets that are too small into their nearest neighbour, smallest first.
     for b in sorted(groups, key=lambda b: len(groups[b])):
         if 0 < len(groups[b]) < min_size:
-            target = next((n for n in NEAREST[b] if len(groups[n]) >= min_size), None)
+            # A big enough neighbour first; otherwise a small neighbour that together reaches the
+            # minimum (calm Feels + Late Night stay calm instead of both landing in Cruise).
+            target = next((n for i, n in enumerate(NEAREST[b]) if len(groups[n]) >= min_size
+                           or (i == 0 and groups[n] and len(groups[n]) + len(groups[b]) >= min_size)), None)
             if target:
                 groups[target] += groups[b]
                 groups[b] = []

@@ -73,3 +73,60 @@ def check(lib, threshold=1.25):
                if not ok and abs(p - r[1]["energy"]) >= threshold]
     flagged.sort(key=lambda f: -abs(f[2] - f[1]["energy"]))
     return report, weights, flagged
+
+
+# --- Crowd check (Last.fm listener tags) -------------------------------------------
+
+CALM_TAGS = {"chill", "chillout", "chill out", "mellow", "relaxing", "relax", "calm", "sad", "melancholic",
+             "melancholy", "slow", "ballad", "ballads", "acoustic", "sleep",
+             "soft", "lo-fi", "lofi", "dreamy", "night", "late night", "emotional", "heartbreak",
+             "atmospheric", "ambient", "downtempo", "soothing", "sad songs", "rainy day", "piano"}
+ENERGY_TAGS = {"hype", "energetic", "energy", "aggressive", "workout", "gym", "party", "dance", "banger",
+               "bangers", "upbeat", "hard", "intense", "club", "rage", "high energy", "edm", "drill", "crunk",
+               "festival", "motivation", "motivational", "pump up", "running", "dancefloor", "fun", "anthem"}
+
+
+# Topic tags ("love", "romantic", "beautiful") say what a song is about, not how energetic it is,
+# so they're not in either list. Tags only a few listeners applied (weight < MIN_WEIGHT of 100)
+# are noise.
+MIN_WEIGHT = 10
+
+
+def crowd_energy(entry):
+    """-1 (listeners call it calm) .. +1 (listeners call it energetic); None without clear mood tags."""
+    calm = sum(w for t, w in entry.get("tags", []) if t in CALM_TAGS)
+    hype = sum(w for t, w in entry.get("tags", []) if t in ENERGY_TAGS)
+    return (hype - calm) / (hype + calm) if hype + calm >= MIN_WEIGHT else None
+
+
+def crowd_check(lib, plan=None):
+    """Do listeners agree with the energy labels and with the split groups?"""
+    tags, eff = metadata.load("lastfm"), labels.merged()
+    rows = []
+    for t in lib["tracks"]:
+        pid = t["persistentID"]
+        e = tags.get(pid)
+        if not e or pid not in eff or e.get("from") != "track":
+            continue  # artist-level tags say nothing about a particular song's energy
+        c = crowd_energy(e)
+        if c is not None:
+            rows.append((t, eff[pid], c))
+    out = {"songs_with_tags": sum(1 for v in tags.values() if v.get("from") == "track"),
+           "songs_with_mood_tags": len(rows)}
+    if len(rows) >= 20:
+        lab = np.array([r[1]["energy"] for r in rows], dtype=float)
+        crowd = np.array([r[2] for r in rows])
+        out["corr"] = float(np.corrcoef(lab, crowd)[0, 1])
+        out["by_energy"] = {int(e): (float(crowd[lab == e].mean()), int((lab == e).sum())) for e in sorted(set(lab))}
+        out["disagree"] = sorted([(t, l, c) for t, l, c in rows if (l["energy"] >= 4 and c <= -0.5)
+                                  or (l["energy"] <= 2 and c >= 0.5)], key=lambda r: -abs(r[2]))
+    if plan:
+        groups = {}
+        for op in plan["ops"]:
+            if op["op"] == "add_tracks" and op["playlist"].get("ref"):
+                vals = [crowd_energy(tags[t["id"]]) for t in op["tracks"]
+                        if t["id"] in tags and tags[t["id"]].get("from") == "track"]
+                vals = [v for v in vals if v is not None]
+                groups[op["playlist"]["name"]] = (op["playlist"]["ref"].split("-")[-1], vals)
+        out["groups"] = groups
+    return out

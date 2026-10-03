@@ -216,6 +216,16 @@ def cmd_check_labels(args):
         print(f"  {t['persistentID']}  {t['name'][:38]:38} {t['artist'][:24]:24} label {lab['energy']}  sounds {pred:.1f}")
     if flagged:
         print("\nFix with: python3 organizer.py label TRACK_ID --energy N")
+    crowd = calibrate.crowd_check(load_inventory())
+    if crowd.get("corr") is not None:
+        print(f"\nLast.fm listeners: {crowd['songs_with_mood_tags']} songs have calm/energetic tags; "
+              f"agreement with energy labels: correlation {crowd['corr']:.2f}")
+        print("  crowd energy (-1 calm .. +1 energetic) by label: " +
+              ", ".join(f"{e}: {m:+.2f} ({n})" for e, (m, n) in crowd["by_energy"].items()))
+        if crowd["disagree"]:
+            print(f"  {len(crowd['disagree'])} songs where listeners clearly disagree:")
+            for t, lab, c in crowd["disagree"][:20]:
+                print(f"    {t['persistentID']}  {t['name'][:36]:36} label {lab['energy']}  crowd {c:+.2f}")
 
 
 def cmd_evaluate(args):
@@ -231,6 +241,13 @@ def cmd_evaluate(args):
             print(f"  {source}: x{r['weighted']:.2f}")
             for name, n, x in r["groups"]:
                 print(f"      {name[:36]:36} {n:3} songs  x{x:.2f}")
+        import calibrate
+        crowd = calibrate.crowd_check(lib, plan)
+        if crowd.get("groups"):
+            print("\nWhat Last.fm listeners call each new playlist (-1 calm .. +1 energetic):")
+            for name, (group, vals) in crowd["groups"].items():
+                if vals:
+                    print(f"      {name[:36]:36} {group:11} {sum(vals) / len(vals):+.2f}  ({len(vals)} tagged songs)")
 
 
 def cmd_label(args):

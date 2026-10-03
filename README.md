@@ -74,7 +74,11 @@ x1.1 overall, some groups below x1.0). Data-driven clustering and similarity-bas
 refinement were tried and did no better on that independent check, so the simpler,
 explainable rules stay. A timbre fingerprint (MFCCs) was also tried: it neither
 improved playlist fit (85.5–86.6% vs 86.8%) nor showed the split groups sounding
-alike, so it is measured and stored but not used. Treat split plans as a starting point to review, not a
+alike, so it is measured and stored but not used. Last.fm listener tags give an outside check on
+energy: where listeners clearly tag a song calm or energetic (39 songs in the
+author's library) they agree with the energy labels (correlation 0.79), and every
+planned group leans the expected way (Party/Gym tagged energetic, Late Night calm).
+Treat split plans as a starting point to review, not a
 verdict; `label` overrides and re-running `split` are the main way to improve them.
 
 ## Safety

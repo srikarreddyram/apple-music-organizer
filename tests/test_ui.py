@@ -281,3 +281,25 @@ class MoveSongTests(SandboxTest):
         lib = ui.load_lib()
         _, left = reorg.split_ops(lib, lib["playlists"][3], min_size=1)
         self.assertIn("RAP2", [t["id"] for t in left])
+
+
+CALM = [track(f"C{i}", f"Calm {i}", f"Artist {i}", "Pop") for i in range(8)]
+SOFT = [track(f"S{i}", f"Soft {i}", f"Singer {i}", "Pop") for i in range(5)]
+LOUD = [track(f"L{i}", f"Loud {i}", f"Band {i}", "Rock") for i in range(18)]
+
+
+class SmallGroupTests(SandboxTest):
+    tracks = CALM + SOFT + LOUD
+    playlists = [{"persistentID": "MIX", "name": "Mood", "smart": False, "specialKind": "none",
+                  "trackIDs": [t["persistentID"] for t in CALM + SOFT + LOUD]}]
+
+    def test_small_calm_groups_merge_with_each_other_not_into_cruise(self):
+        rows = {t["persistentID"]: ("dreamy", 2, ["late-night"], "english", "indie-pop") for t in CALM}
+        rows.update({t["persistentID"]: ("romantic", 3, [], "english", "indie-pop") for t in SOFT})
+        rows.update({t["persistentID"]: ("confident", 3, ["drive"], "english", "alt-rock") for t in LOUD})
+        self.set_labels(rows)
+        lib = ui.load_lib()
+        ops, _ = reorg.split_ops(lib, lib["playlists"][0], min_size=10)
+        where = {t["id"]: o["playlist"]["ref"] for o in ops if o["op"] == "add_tracks" for t in o["tracks"]}
+        self.assertEqual({where[t["persistentID"]] for t in CALM + SOFT}, {"Mood-Late Night"})
+        self.assertEqual({where[t["persistentID"]] for t in LOUD}, {"Mood-Cruise"})
