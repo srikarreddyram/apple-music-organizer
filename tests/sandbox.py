@@ -84,6 +84,8 @@ class Dialogs:
 
     def choose(self, items, prompt, multiple=False, ok="OK", preselect_all=False):
         self.shown.append(("choose", prompt, list(items)))
+        if not self.choices:
+            return []  # like pressing Cancel
         answer = self.choices.pop(0)
         return list(range(len(items))) if answer == "all" else answer
 

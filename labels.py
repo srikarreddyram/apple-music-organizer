@@ -21,25 +21,30 @@ LANGUAGES = ["english", "telugu", "tamil", "hindi", "punjabi", "spanish", "korea
 STYLES = [
     # rap
     "trap", "melodic-rap", "drill", "rage", "boom-bap", "conscious-rap", "pop-rap", "west-coast", "uk-rap",
+    "experimental-rap",
     # r&b / pop
-    "rnb", "alt-rnb", "dance-pop", "synth-pop", "teen-pop", "acoustic-pop", "pop-ballad", "indie-pop",
+    "rnb", "alt-rnb", "funk", "dance-pop", "synth-pop", "teen-pop", "acoustic-pop", "pop-ballad", "indie-pop",
     # rock / alternative
     "indie-rock", "alt-rock", "dream-pop", "pop-rock", "hard-rock",
     # electronic / latin
     "edm", "house", "uk-garage", "electronic", "phonk", "reggaeton", "latin-pop", "latin-trap",
     # indian
     "film-melody", "film-dance", "film-bgm", "indian-indie", "punjabi-pop", "sufi", "devotional",
+    # roots
+    "folk", "country", "jazz",
     "other",
 ]
 FAMILIES = {
-    "rap": ["trap", "melodic-rap", "drill", "rage", "boom-bap", "conscious-rap", "pop-rap", "west-coast", "uk-rap"],
-    "rnb": ["rnb", "alt-rnb"],
-    "pop": ["dance-pop", "synth-pop", "teen-pop", "acoustic-pop", "pop-ballad", "indie-pop"],
-    "rock": ["indie-rock", "alt-rock", "dream-pop", "pop-rock", "hard-rock"],
+    "rap": ["trap", "melodic-rap", "drill", "rage", "boom-bap", "conscious-rap", "pop-rap", "west-coast", "uk-rap",
+            "experimental-rap"],
+    "rnb": ["rnb", "alt-rnb", "funk"],
+    "pop": ["dance-pop", "synth-pop", "teen-pop", "acoustic-pop", "pop-ballad", "indie-pop", "dream-pop"],
+    "rock": ["indie-rock", "alt-rock", "pop-rock", "hard-rock"],
     "electronic": ["edm", "house", "uk-garage", "electronic", "phonk"],
     "latin": ["reggaeton", "latin-pop", "latin-trap"],
     "indian-film": ["film-melody", "film-dance", "film-bgm"],
     "indian-other": ["indian-indie", "punjabi-pop", "sufi", "devotional"],
+    "roots": ["folk", "country", "jazz"],
     "other": ["other"],
 }
 FAMILY = {style: fam for fam, styles in FAMILIES.items() for style in styles}

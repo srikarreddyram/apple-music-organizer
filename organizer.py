@@ -14,6 +14,7 @@ Usage:
   python3 organizer.py plans                 List change plans and their status
   python3 organizer.py review PLAN           Show every op and track in a plan
   python3 organizer.py approve PLAN 1,3-5    Approve ops (or "all"); `reject` undoes approval
+  python3 organizer.py names PLAN [--reroll N]  Name options for new playlists; rename PLAN OP "Name"
   python3 organizer.py drop PLAN OP 2,7      Remove tracks from an op before approving it
   python3 organizer.py apply PLAN            Apply approved ops to Music, verify, log, write undo plan
   python3 organizer.py enrich [SOURCE...]    Add metadata: apple, audio, musicbrainz (default: all)
@@ -183,14 +184,22 @@ def cmd_fill(args):
 
 def cmd_split(args):
     lib = load_inventory()
-    ops = []
+    ops, left_out, used = [], {}, {p["name"].strip() for p in lib["playlists"]}
     for ref in args.playlists:
         p = find_playlist(lib, ref)
-        ops += reorg.split_ops(lib, p, min_size=args.min_size)
-    names = ", ".join(find_playlist(lib, r)["name"].strip() for r in args.playlists)
-    plan = plans.new_plan(f"Split {names}", ops, lib)
+        more, left = reorg.split_ops(lib, p, min_size=args.min_size, used=used)
+        ops += more
+        if left:
+            left_out[p["name"].strip()] = left
+    sources = ", ".join(find_playlist(lib, r)["name"].strip() for r in args.playlists)
+    plan = plans.new_plan(f"Split {sources}", ops, lib)
+    plan["leftOut"] = left_out
     plans.save_plan(plan)
     plans.print_plan(plan, verbose=args.verbose)
+    for source, left in left_out.items():
+        print(f"\nStay only in {source!r} (too few of their kind to form a playlist):")
+        for t in left:
+            print(f"    {t['name']} - {t['artist']}")
     print(f"\nSaved {plan['id']}. See every track with: python3 organizer.py review {plan['id']}")
 
 
@@ -285,6 +294,29 @@ def cmd_approve(args, value=True):
     plan = plans.load_plan(args.plan)
     plans.set_approval(plan, args.ops, value)
     plans.print_plan(plan, verbose=False)
+
+
+def cmd_rename(args):
+    plan = plans.load_plan(args.plan)
+    plans.rename(plan, args.op, args.name)
+    plans.print_plan(plan, verbose=False)
+
+
+def cmd_names(args):
+    import names
+    plan = plans.load_plan(args.plan)
+    taken = {o["name"] for o in plan["ops"] if o["op"] == "create_playlist"}
+    for op in plan["ops"]:
+        if op["op"] != "create_playlist" or not op.get("nameProfile") or op["status"] != "pending":
+            continue
+        if args.reroll:
+            op["nameOptions"] = names.options(op["nameProfile"], op["bucket"], avoid=taken - {op["name"]},
+                                              seed=op["ref"], reroll=args.reroll)
+        print(f"op {op['n']}: {op['name']}")
+        for o in op["nameOptions"]:
+            print(f"    {o}")
+    plans.save_plan(plan)
+    print(f"\nPick one with: python3 organizer.py rename {plan['id']} OP \"Name\"")
 
 
 def cmd_drop(args):
@@ -444,6 +476,17 @@ def main():
         a.add_argument("plan")
         a.add_argument("ops", help='op numbers like "1,3-5" or "all"')
         a.set_defaults(fn=lambda args, v=value: cmd_approve(args, v))
+
+    rn = sub.add_parser("rename", help="rename a playlist a plan will create")
+    rn.add_argument("plan")
+    rn.add_argument("op", type=int)
+    rn.add_argument("name")
+    rn.set_defaults(fn=cmd_rename)
+
+    nm = sub.add_parser("names", help="show (or --reroll) name options for a plan's new playlists")
+    nm.add_argument("plan")
+    nm.add_argument("--reroll", type=int, default=0, help="any number for a fresh set")
+    nm.set_defaults(fn=cmd_names)
 
     dr = sub.add_parser("drop")
     dr.add_argument("plan")

@@ -94,6 +94,8 @@ def print_plan(plan, verbose=True):
                 "delete_playlist": "DELETE"}[op["op"]]
         count = f" ({len(op['tracks'])} tracks)" if op.get("tracks") else ""
         print(f"\n [{mark}] {op['n']:>2}. {verb} {target_label(op)}{count}   <{op['status']}>")
+        if verbose and op.get("nameOptions") and op["status"] == "pending":
+            print(f"        other names: {' / '.join(o for o in op['nameOptions'] if o != op['name'])}")
         if op.get("reason"):
             print(f"        why: {op['reason']}")
         if verbose:
@@ -122,6 +124,23 @@ def set_approval(plan, spec, value):
         if by_n[n]["status"] != "pending":
             raise SystemExit(f"op {n} is already {by_n[n]['status']}")
         by_n[n]["approved"] = value
+    save_plan(plan)
+
+
+def rename(plan, n, name):
+    """Rename a not-yet-created playlist, keeping the ops that add to it in step."""
+    op = next((o for o in plan["ops"] if o["n"] == n), None)
+    if not op or op["op"] != "create_playlist":
+        raise SystemExit(f"op {n} doesn't create a playlist")
+    if op["status"] != "pending":
+        raise SystemExit(f"op {n} is already {op['status']}; rename the playlist in Music instead")
+    op["name"] = name
+    if op.get("ref"):
+        import names
+        names.remember(op["ref"], [name])
+    for o in plan["ops"]:
+        if (o.get("playlist") or {}).get("ref") == op.get("ref"):
+            o["playlist"]["name"] = name
     save_plan(plan)
 
 

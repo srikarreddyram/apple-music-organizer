@@ -174,12 +174,18 @@ def best_songs(lib, name, country="in", size=20, analyse=40, progress=print):
 def plan_ops(lib, result, name=None):
     """create + add ops for owned songs; the rest are returned as `waiting` for later."""
     tracks = {t["persistentID"]: t for t in lib["tracks"]}
-    title = name or f"{result['artist']} · For You"
+    import names
+    from metadata import strip_title
+    top = strip_title(result["picks"][0]["name"]) if result["picks"] else None
+    prof = {"family": None, "language": None, "artist": result["artist"], "year": None, "song": top}
+    opts = names.options(prof, "For You", seed=result["artist"]) + [f"{result['artist']} · For You"]
+    title = name or opts[0]
     have = [p for p in result["picks"] if p["libraryID"]]
     waiting = [{k: p[k] for k in ("name", "artist", "album", "url", "trackId")} for p in result["picks"]
                if not p["libraryID"]]
-    ops = [{"op": "create_playlist", "name": title, "ref": "artist",
-            "reason": f"best {result['artist']} songs for your taste"}]
+    ops = [{"op": "create_playlist", "name": title, "ref": "artist", "nameOptions": opts,
+            "nameProfile": prof,
+            "bucket": "For You", "reason": f"best {result['artist']} songs for your taste"}]
     if have:
         ops.append({"op": "add_tracks", "playlist": {"ref": "artist", "name": title},
                     "tracks": [{**track_ref(tracks[p["libraryID"]]), "note": why(p)} for p in have],

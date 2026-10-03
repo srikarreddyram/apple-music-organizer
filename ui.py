@@ -18,6 +18,7 @@ import artist
 import discover
 import labels
 import metadata
+import names
 import plans
 import suggest
 
@@ -73,6 +74,35 @@ def notify(message):
 
 def load_lib():
     return json.loads(INVENTORY.read_text())
+
+
+def pick_names(plan):
+    """Let the user name each playlist the plan will create, from options or their own."""
+    taken = {o["name"] for o in plan["ops"] if o["op"] == "create_playlist"}
+    for op in plan["ops"]:
+        if op["op"] != "create_playlist" or not op["approved"] or op["status"] != "pending":
+            continue
+        opts, reroll = op.get("nameOptions") or [op["name"]], 0
+        songs = next((len(o["tracks"]) for o in plan["ops"]
+                      if (o.get("playlist") or {}).get("ref") == op.get("ref") and o.get("tracks")), 0)
+        while True:
+            items = opts + ["✏️  Type my own…", "🎲  Give me different ones"]
+            what = f"{op.get('bucket') or 'new'} playlist" + (f", {songs} songs" if songs else "")
+            pick = choose(items, f"Name the {what}:\n({op['reason']})", ok="Use this")
+            if not pick:
+                break  # keep the current name
+            if pick[0] < len(opts):
+                plans.rename(plan, op["n"], opts[pick[0]])
+                break
+            if pick[0] == len(opts):
+                own = ask("Playlist name:", op["name"])
+                if own:
+                    plans.rename(plan, op["n"], own)
+                break
+            reroll += 1
+            if op.get("nameProfile"):
+                opts = names.options(op["nameProfile"], op.get("bucket"), avoid=taken, seed=op["ref"], reroll=reroll)
+        taken.add(op["name"])
 
 
 def confirm_and_apply(plan):
@@ -139,6 +169,7 @@ def review():
         if op["status"] == "pending":
             op["approved"] = op["n"] in chosen
     plans.save_plan(plan)
+    pick_names(plan)
     confirm_and_apply(plan)
 
 
@@ -347,6 +378,7 @@ def artist_playlist():
     for op in plan["ops"]:
         op["approved"] = True
     plans.save_plan(plan)
+    pick_names(plan)
     confirm_and_apply(plan)
     if not waiting or plan["ops"][0]["status"] != "applied":
         return

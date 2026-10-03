@@ -75,19 +75,19 @@ class FlowTests(SandboxTest):
 
     def test_review_pulls_in_the_create_for_a_new_playlist(self):
         lib = ui.load_lib()
-        plans.save_plan(plans.new_plan("Split Them", reorg.split_ops(lib, lib["playlists"][3], min_size=1)))
+        plans.save_plan(plans.new_plan("Split Them", reorg.split_ops(lib, lib["playlists"][3], min_size=1)[0]))
         self.dialogs.choices = [[0], [1]]  # the plan, then only the first add op
         ui.review()
-        new = [p for p in self.music.playlists.values() if p["name"].startswith("Them · ")]
+        new = [p for pid, p in self.music.playlists.items() if pid.startswith("NEW")]
         self.assertEqual(len(new), 1)
         self.assertTrue(new[0]["trackIDs"])
 
     def test_split_partitions_every_song_once(self):
         lib = ui.load_lib()
-        ops = reorg.split_ops(lib, lib["playlists"][3], min_size=1)
+        ops = reorg.split_ops(lib, lib["playlists"][3], min_size=1)[0]
         placed = [t["id"] for o in ops if o["op"] == "add_tracks" for t in o["tracks"]]
         self.assertEqual(sorted(placed), sorted(set(PLAYLISTS[3]["trackIDs"])))
-        gym = next(o for o in ops if o["op"] == "add_tracks" and o["playlist"]["name"] == "Them · Gym")
+        gym = next(o for o in ops if o["op"] == "add_tracks" and o["playlist"]["ref"] == "Them-Gym")
         self.assertEqual([t["id"] for t in gym["tracks"]], ["RAP1", "RAP2"])
 
     def test_artist_playlist_creates_then_fills_after_adding(self):
@@ -110,7 +110,8 @@ class FlowTests(SandboxTest):
         self.dialogs.asks = ["Kendrick Lamar"]
         self.dialogs.choices = ["all"]
         ui.artist_playlist()
-        made = next(p for p in self.music.playlists.values() if p["name"] == "Kendrick Lamar · For You")
+        made = next(p for pid, p in self.music.playlists.items() if pid.startswith("NEW"))
+        self.assertTrue(made["name"])
         self.assertEqual(made["trackIDs"], ["RAP1", "NEW1"])
 
     def test_refresh_queues_fill_for_songs_added_later(self):
@@ -135,6 +136,80 @@ class FlowTests(SandboxTest):
     def test_manual_label_overrides_inferred(self):
         labels.save("manual", {"RAP3": {"energy": 5, "mood": "hype"}})
         lib = ui.load_lib()
-        ops = reorg.split_ops(lib, lib["playlists"][3], min_size=1)
-        gym = next(o for o in ops if o["op"] == "add_tracks" and o["playlist"]["name"] == "Them · Gym")
+        ops = reorg.split_ops(lib, lib["playlists"][3], min_size=1)[0]
+        gym = next(o for o in ops if o["op"] == "add_tracks" and o["playlist"]["ref"] == "Them-Gym")
         self.assertIn("RAP3", [t["id"] for t in gym["tracks"]])
+
+
+class NamingTests(SandboxTest):
+    tracks = TRACKS
+    playlists = PLAYLISTS
+
+    def setUp(self):
+        super().setUp()
+        self.set_labels(LABELS)
+        lib = ui.load_lib()
+        self.plan = plans.new_plan("Split Them", reorg.split_ops(lib, lib["playlists"][3], min_size=1)[0])
+        plans.save_plan(self.plan)
+
+    def test_split_names_are_not_generic_and_unique(self):
+        made = [o["name"] for o in self.plan["ops"] if o["op"] == "create_playlist"]
+        self.assertTrue(all("·" not in n for n in made), made)
+        self.assertEqual(len(made), len(set(made)))
+        self.assertTrue(all(len(o["nameOptions"]) >= 3 for o in self.plan["ops"] if o["op"] == "create_playlist"))
+
+    def test_rename_keeps_adds_in_step(self):
+        plans.rename(self.plan, 1, "Leg Day Hymns")
+        add = next(o for o in self.plan["ops"] if o["op"] == "add_tracks"
+                   and o["playlist"]["ref"] == self.plan["ops"][0]["ref"])
+        self.assertEqual(add["playlist"]["name"], "Leg Day Hymns")
+
+    def test_review_lets_you_type_your_own_name(self):
+        n_opts = len(self.plan["ops"][0]["nameOptions"])
+        self.dialogs.choices = [[0], [1], [n_opts]]  # plan, first add op, "Type my own…"
+        self.dialogs.asks = ["Leg Day Hymns"]
+        ui.review()
+        self.assertIn("Leg Day Hymns", [p["name"] for p in self.music.playlists.values()])
+
+    def test_reroll_gives_new_options(self):
+        n_opts = len(self.plan["ops"][0]["nameOptions"])
+        self.dialogs.choices = [[0], [1], [n_opts + 1], [0]]  # ..., "Give me different ones", then the first
+        ui.review()
+        name_prompts = [s for s in self.dialogs.shown if s[0] == "choose" and s[1].startswith("Name the")]
+        self.assertNotEqual(name_prompts[0][2][:n_opts], name_prompts[1][2][:n_opts])
+
+
+RAP = [track(f"R{i}", f"Rap {i}", "Rapper", "Hip-Hop/Rap") for i in range(12)]
+FOLK = [track(f"F{i}", f"Folk {i}", "John Denver", "Pop") for i in range(5)]
+
+
+class MisfitTests(SandboxTest):
+    tracks = RAP + FOLK
+    playlists = [
+        {"persistentID": "ONE", "name": "Rap + 1 folk", "smart": False, "specialKind": "none",
+         "trackIDs": [t["persistentID"] for t in RAP] + ["F0"]},
+        {"persistentID": "FIVE", "name": "Rap + 5 folk", "smart": False, "specialKind": "none",
+         "trackIDs": [t["persistentID"] for t in RAP] + [t["persistentID"] for t in FOLK]},
+    ]
+
+    def setUp(self):
+        super().setUp()
+        rows = {t["persistentID"]: ("hype", 5, ["workout"], "english", "trap") for t in RAP}
+        rows.update({t["persistentID"]: ("romantic", 2, ["wind-down"], "english", "folk") for t in FOLK})
+        self.set_labels(rows)
+
+    def placed(self, ops):
+        return {t["id"]: o["playlist"]["ref"] for o in ops if o["op"] == "add_tracks" for t in o["tracks"]}
+
+    def test_a_lone_misfit_stays_only_in_the_original(self):
+        lib = ui.load_lib()
+        ops, left = reorg.split_ops(lib, lib["playlists"][0], min_size=1, rare=0.15)
+        self.assertNotIn("F0", self.placed(ops))
+        self.assertEqual([t["id"] for t in left], ["F0"])
+
+    def test_enough_misfits_get_their_own_playlist(self):
+        lib = ui.load_lib()
+        ops, left = reorg.split_ops(lib, lib["playlists"][1], min_size=1, rare=0.5)
+        where = self.placed(ops)
+        self.assertEqual({where[t["persistentID"]] for t in FOLK}, {"Rap + 5 folk-roots"})
+        self.assertEqual(left, [])
