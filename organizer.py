@@ -405,14 +405,11 @@ def cmd_enrich(args):
         print(f"last.fm: {own} of {len(data)} songs have their own listener tags (others use the artist's)")
 
 
-MENU_ACTIONS = [  # (menu title, ui action, needs a selection)
-    ("Organizer – Where Do These Belong", "belong", True),
-    ("Organizer – Discover From Selection", "discover", True),
-    ("Organizer – Artist Playlist…", "artist", False),
-    ("Organizer – Move Song…", "move", True),
-    ("Organizer – Review & Apply Changes", "review", False),
-    ("Organizer – Refresh Scan & Metadata", "refresh", False),
-]
+# Music's Scripts menu only runs scripts, so its entry opens the app's panel over Music.
+MENU_SCRIPT_NAME = "✨ Organizer"
+OLD_MENU_SCRIPTS = ["Organizer – Where Do These Belong", "Organizer – Discover From Selection",
+                    "Organizer – Artist Playlist…", "Organizer – Move Song…", "Organizer – Review & Apply Changes",
+                    "Organizer – Refresh Scan & Metadata"]
 SCRIPT_DIRS = [Path.home() / "Library/Music/Scripts",                 # Music's own Scripts menu
                Path.home() / "Library/Scripts/Applications/Music"]    # system Script menu, when Music is in front
 
@@ -428,21 +425,19 @@ def cmd_ui(args):
 
 
 def cmd_install_scripts(args):
+    """Put one "✨ Organizer" item in Music's Scripts menu that pops open the app's panel."""
     import subprocess
-    template = (Path(__file__).parent / "extension" / "launch.applescript").read_text()
+    src = 'open location "musicorganizer://show"'
     for d in SCRIPT_DIRS:
         d.mkdir(parents=True, exist_ok=True)
-        for title, action, selection in MENU_ACTIONS:
-            src = (template.replace("{{ACTION}}", action).replace("{{SELECTION}}", str(selection).lower())
-                   .replace("{{PROJECT}}", str(Path(__file__).parent.resolve())).replace("{{PYTHON}}", sys.executable))
-            out = d / f"{title}.scpt"
-            proc = subprocess.run(["osacompile", "-o", str(out), "-e", src], capture_output=True, text=True)
-            if proc.returncode:
-                sys.exit(f"could not compile {title}: {proc.stderr}")
-        print(f"installed {len(MENU_ACTIONS)} scripts in {d}")
-    print("\nIn Music, look for the scroll icon in the menu bar (Music's Scripts menu). If it isn't there,")
-    print("turn on Script Editor > Settings > General > Show Script menu in menu bar; the actions then")
-    print("appear under that menu whenever Music is the frontmost app.")
+        for old in OLD_MENU_SCRIPTS:  # the earlier dialog-based items this tool installed
+            (d / f"{old}.scpt").unlink(missing_ok=True)
+        out = d / f"{MENU_SCRIPT_NAME}.scpt"
+        proc = subprocess.run(["osacompile", "-o", str(out), "-e", src], capture_output=True, text=True)
+        if proc.returncode:
+            sys.exit(f"could not compile the menu script: {proc.stderr}")
+        print(f"installed {out}")
+    print("\nIn Music, open the Scripts menu (scroll icon between Window and Help) and choose ✨ Organizer.")
 
 
 APP_DIR = Path.home() / "Applications" / "Music Organizer.app"
@@ -476,10 +471,14 @@ def cmd_install_app(args):
             "NSAppleEventsUsageDescription": "Music Organizer reads your library and, when you press Apply, "
                                              "creates playlists and adds songs in Music.",
             "OrganizerProject": str(root), "OrganizerPython": sys.executable,
+            "CFBundleURLTypes": [{"CFBundleURLName": "Music Organizer", "CFBundleURLSchemes": ["musicorganizer"]}],
         }, f)
     subprocess.run(["codesign", "--force", "--sign", "-", str(APP_DIR)], capture_output=True)
+    subprocess.run(["/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework"
+                    "/Support/lsregister", "-f", str(APP_DIR)], capture_output=True)  # register the URL scheme
     subprocess.run(["open", str(APP_DIR)])
-    print(f"Installed {APP_DIR} and started it: look for the ♫ icon in the menu bar.")
+    cmd_install_scripts(args)
+    print(f"\nInstalled {APP_DIR} and started it. In Music: Scripts menu (scroll icon) → ✨ Organizer.")
 
 
 def cmd_discover(args):
@@ -590,7 +589,7 @@ def main():
     a.set_defaults(fn=cmd_api)
 
     u = sub.add_parser("ui", help="dialog flows used by the Music Scripts menu")
-    u.add_argument("action", choices=["review", "belong", "discover", "refresh", "artist", "move"])
+    u.add_argument("action", choices=["review", "belong", "discover", "refresh", "artist", "move"])  # old dialogs
     u.add_argument("ids", nargs="*", metavar="TRACK_ID")
     u.set_defaults(fn=cmd_ui)
 

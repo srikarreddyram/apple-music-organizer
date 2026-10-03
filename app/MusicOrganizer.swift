@@ -1,7 +1,6 @@
-// Music Organizer: a menu bar panel for the organizer.
+// Music Organizer: a panel that pops over Music from its Scripts menu (✨ Organizer).
 //
-// Click the ♫ icon in the menu bar: the panel reads what's open in Music (playlist,
-// selected songs) and offers what fits. Every change goes through the Python
+// The panel reads what's open in Music (playlist, selected songs) and offers what fits. Every change goes through the Python
 // organizer (`organizer.py api ...`): plans, verification after each step, audit log
 // and undo. The panel only shows and applies what you tick.
 
@@ -42,6 +41,8 @@ struct MoveTarget: Decodable, Identifiable { let id, name, group: String }
 struct MoveGroup: Decodable, Identifiable { var id: String { home.id }; let home: Sel2Home; let source: String; let tracks: [Sel2]; let targets: [MoveTarget] }
 struct Sel2Home: Decodable { let id, name: String }
 struct MoveResp: Decodable { let groups: [MoveGroup] }
+struct PlaylistRow: Decodable, Identifiable { let id, name: String; let size, labelled: Int; let canSplit: Bool }
+struct PlaylistsResp: Decodable { let playlists: [PlaylistRow] }
 struct RefreshResp: Decodable, Hashable { let tracks, new, unlabelled: Int }
 struct ErrorBox: Decodable { let error: String? }
 
@@ -110,6 +111,7 @@ enum Backend {
 
 enum Screen: Equatable {
     case home, plans, plan(PlanView), belong, artist, discover, move, result(ApplyResp, String), refresh(RefreshResp?)
+    case pickPlaylist
 }
 
 @MainActor final class AppModel: ObservableObject {
@@ -119,6 +121,7 @@ enum Screen: Equatable {
     @Published var busy: String?
     @Published var error: String?
     @Published var pendingCount = 0
+    @Published var popToken = 0
 
     func go(_ s: Screen) {
         withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) { back.append(screen); screen = s }
@@ -246,6 +249,7 @@ struct RootView: View {
                 case .move: MoveView()
                 case .result(let r, let title): ResultView(result: r, title: title)
                 case .refresh(let r): RefreshView(result: r)
+                case .pickPlaylist: PickPlaylistView()
                 }
             }
             .padding(16)
@@ -278,7 +282,7 @@ struct RootView: View {
         switch model.screen {
         case .home: "home"; case .plans: "plans"; case .plan(let p): "plan-\(p.id)"; case .belong: "belong"
         case .artist: "artist"; case .discover: "discover"; case .move: "move"; case .result(let r, _): "result-\(r.plan ?? "")"
-        case .refresh: "refresh"
+        case .refresh: "refresh"; case .pickPlaylist: "pick"
         }
     }
 }
@@ -365,6 +369,9 @@ struct HomeView: View {
                 Button { Task { await model.loadContext() } } label: {
                     Image(systemName: "arrow.clockwise").frame(width: 28, height: 28).background(Circle().fill(.white.opacity(0.08)))
                 }.buttonStyle(.plain).help("Read Music again")
+                Button { FloatingPanel.close() } label: {
+                    Image(systemName: "power").frame(width: 28, height: 28).background(Circle().fill(.white.opacity(0.08)))
+                }.buttonStyle(.plain).help("Quit Organizer (Esc)")
             }
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 10) {
@@ -375,7 +382,7 @@ struct HomeView: View {
                 }.padding(.vertical, 2)
             }
             Spacer(minLength: 0)
-            Text("Nothing changes in Music until you tick it and press Apply. Every change can be undone.")
+            Text("Nothing changes in Music until you tick it and press Apply. Every change can be undone. Esc to quit.")
                 .font(.caption2).foregroundStyle(.tertiary)
         }
         .onAppear { shown = true }
@@ -413,6 +420,10 @@ struct HomeView: View {
             out.append(AnyView(ActionCard(icon: "arrow.left.arrow.right", title: "Move to another split playlist",
                                           subtitle: "For songs in a playlist the organizer made") { model.go(.move) }))
         }
+        out.append(AnyView(ActionCard(icon: "square.split.2x2", title: "Split a playlist by vibe",
+                                      subtitle: "Pick any of your playlists", hero: c?.playlist?.canSplit != true && sel.isEmpty) {
+            model.go(.pickPlaylist)
+        }))
         out.append(AnyView(ActionCard(icon: "checklist", title: "Review & apply changes",
                                       subtitle: "Pick changes, name new playlists, apply", badge: model.pendingCount) { model.go(.plans) }))
         out.append(AnyView(ActionCard(icon: "person.wave.2.fill", title: "Artist playlist",
@@ -429,7 +440,7 @@ struct HomeView: View {
         if sel.isEmpty && c?.playlist?.canSplit != true {
             out.insert(AnyView(HStack(spacing: 8) {
                 Image(systemName: "hand.point.up.left.fill").foregroundStyle(brand)
-                Text("Tip: open a playlist in Music to split it, or select songs to find where they belong.")
+                Text("Tip: select songs in Music to find where they belong, or split any playlist below.")
                     .font(.caption).foregroundStyle(.secondary)
             }.card()), at: 0)
         }
@@ -588,6 +599,60 @@ struct PlanDetailView: View {
             let label = plan.isUndo ? "Undoing…" : "Applying to Music…"
             if let r = await model.run(ApplyResp.self, label, "apply", body: ["plan": plan.id, "ops": Array(chosen), "names": nameBody]) {
                 model.go(.result(r, plan.isUndo ? "Undone" : "Done"))
+            }
+        }
+    }
+}
+
+// MARK: - Pick a playlist ------------------------------------------------------------
+
+struct PickPlaylistView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var rows: [PlaylistRow] = []
+    @State private var query = ""
+    var shown: [PlaylistRow] { query.isEmpty ? rows : rows.filter { $0.name.localizedCaseInsensitiveContains(query) } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Header(title: "Split a playlist", subtitle: "Into Gym, Party, Cruise, Feels and Late Night. The original stays.")
+            HStack {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search playlists", text: $query).textFieldStyle(.plain)
+            }.card()
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 8) {
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { i, p in
+                        Button {
+                            Task {
+                                if let r = await model.run(PlanResp.self, "Sorting \(p.name) by vibe…", "split", [p.id]) {
+                                    model.go(.plan(r.plan))
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(p.canSplit ? AnyShapeStyle(brand) : AnyShapeStyle(.white.opacity(0.08)))
+                                    Image(systemName: "music.note.list").foregroundStyle(.white)
+                                }.frame(width: 36, height: 36)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(p.name).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                                    Text(p.canSplit ? "\(p.size) songs" : "\(p.size) songs · too small to split")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if p.canSplit { Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary) }
+                            }.contentShape(Rectangle()).card()
+                        }
+                        .buttonStyle(.plain).disabled(!p.canSplit).opacity(p.canSplit ? 1 : 0.5)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .animation(.spring(response: 0.45, dampingFraction: 0.8).delay(Double(i) * 0.03), value: rows.count)
+                    }
+                }
+            }
+        }
+        .task {
+            if let r = await model.run(PlaylistsResp.self, "Loading your playlists…", "playlists") {
+                withAnimation(.spring()) { rows = r.playlists }
             }
         }
     }
@@ -910,15 +975,106 @@ struct RefreshView: View {
 
 // MARK: - App ------------------------------------------------------------------------------
 
+/// The floating panel: opened from Music's Scripts menu (musicorganizer://show), or with
+/// `MusicOrganizer --preview`. Same content as the menu bar panel, popping in over Music.
+@MainActor enum FloatingPanel {
+    static var window: NSPanel?
+    static let model = AppModel()
+    static let closer = PanelCloser()
+    static var keyMonitor: Any?
+
+    /// Done with the organizer: close the panel, which quits the app.
+    static func close() { window?.close() }
+
+    static func show() {
+        if let w = window {
+            model.home()
+            pop(w)
+            return
+        }
+        let w = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 400, height: 580),
+                        styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        w.titlebarAppearsTransparent = true
+        w.titleVisibility = .hidden
+        w.isMovableByWindowBackground = true
+        w.level = .floating
+        w.isReleasedWhenClosed = false
+        w.hidesOnDeactivate = false
+        let effect = NSVisualEffectView()
+        effect.material = .popover
+        effect.state = .active
+        let host = NSHostingView(rootView: PoppingRoot().environmentObject(model))
+        host.frame = effect.bounds
+        host.autoresizingMask = [.width, .height]
+        effect.addSubview(host)
+        w.contentView = effect
+        w.delegate = closer
+        window = w
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+            let cmd = e.modifierFlags.contains(.command)
+            if e.keyCode == 53 || (cmd && ["q", "w"].contains(e.charactersIgnoringModifiers ?? "")) {
+                close()  // Esc, ⌘Q, ⌘W
+                return nil
+            }
+            return e
+        }
+        pop(w)
+    }
+
+    /// Place the panel near the top right of the screen and fade it in.
+    static func pop(_ w: NSPanel) {
+        if let screen = NSScreen.main?.visibleFrame {
+            w.setFrameTopLeftPoint(NSPoint(x: screen.maxX - 430, y: screen.maxY - 20))
+        }
+        w.alphaValue = 0
+        w.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.22
+            w.animator().alphaValue = 1
+        }
+        model.popToken += 1
+    }
+}
+
+/// Root view that springs in each time the floating panel opens.
+struct PoppingRoot: View {
+    @EnvironmentObject var model: AppModel
+    @State private var shown = false
+    var body: some View {
+        RootView()
+            .scaleEffect(shown ? 1 : 0.9, anchor: .top)
+            .opacity(shown ? 1 : 0)
+            .onChange(of: model.popToken) { _, _ in
+                shown = false
+                withAnimation(.spring(response: 0.42, dampingFraction: 0.72)) { shown = true }
+            }
+            .onAppear { withAnimation(.spring(response: 0.42, dampingFraction: 0.72)) { shown = true } }
+    }
+}
+
+/// The app has no menu bar or Dock icon, so closing its only window quits it.
+final class PanelCloser: NSObject, NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) { NSApp.terminate(nil) }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ n: Notification) {
+        if CommandLine.arguments.contains("--preview") { Task { @MainActor in FloatingPanel.show() } }
+    }
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme == "musicorganizer" {
+            Task { @MainActor in url.host == "quit" ? FloatingPanel.close() : FloatingPanel.show() }
+        }
+    }
+}
+
+/// No menu bar icon and no Dock icon: the app waits in the background and pops its panel over
+/// Music when you choose ✨ Organizer in Music's Scripts menu (which opens musicorganizer://show).
 @main
 struct MusicOrganizerApp: App {
-    @StateObject private var model = AppModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        MenuBarExtra {
-            RootView().environmentObject(model)
-        } label: {
-            Image(systemName: "music.note.list")
-        }
-        .menuBarExtraStyle(.window)
+        Settings { EmptyView() }
     }
 }

@@ -55,6 +55,23 @@ def cmd_context(args):
     return out
 
 
+def cmd_playlists(args):
+    """Your own playlists, biggest first, with whether they can be split."""
+    lib = ui.load_lib()
+    eff = labels.merged()
+    made = plans.created_playlists()
+    out = []
+    for p in lib["playlists"]:
+        if not suggest.editable(p) or p["persistentID"] in made:
+            continue
+        ids = list(dict.fromkeys(p["trackIDs"]))
+        labelled = sum(1 for i in ids if i in eff)
+        out.append({"id": p["persistentID"], "name": p["name"].strip(), "size": len(ids), "labelled": labelled,
+                    "canSplit": labelled >= 20})
+    out.sort(key=lambda x: (-x["canSplit"], -x["size"]))
+    return {"playlists": out}
+
+
 def op_view(op, plan):
     kind = op["op"]
     text = {"create_playlist": "Create", "add_tracks": "Add to", "remove_tracks": "Remove from",
@@ -281,7 +298,7 @@ def cmd_refresh(args):
 
 
 COMMANDS = {
-    "context": cmd_context, "plans": cmd_plans, "plan": cmd_plan, "apply": cmd_apply, "undo": cmd_undo,
+    "context": cmd_context, "playlists": cmd_playlists, "plans": cmd_plans, "plan": cmd_plan, "apply": cmd_apply, "undo": cmd_undo,
     "belong": cmd_belong, "add": cmd_add, "split": cmd_split, "artist": cmd_artist,
     "artist-create": cmd_artist_create, "fill": cmd_fill, "discover": cmd_discover,
     "move-options": cmd_move_options, "move": cmd_move, "refresh": cmd_refresh,

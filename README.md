@@ -17,33 +17,19 @@ plans, and only touches your library when you approve a plan.
   label-based features (split, playlist fit) have nothing to work with; you can add
   your own with `label`.
 
-## Menu bar app
+## The Organizer panel (opened from Music)
 
-`python3 organizer.py install-app` builds a small SwiftUI app (Xcode Command Line
-Tools are enough), installs it in `~/Applications` and starts it. Click the ♫ icon in
-the menu bar: the panel reads what's open in Music and offers what fits, e.g. "Split
-“Mood” by vibe" when a playlist is open, or "Where do these belong?" when songs are
-selected. Review changes, pick names for new playlists, apply, and undo from the
-result screen. The app talks to the organizer through `organizer.py api ...` (JSON),
-so it uses the same plans, checks, audit log and undo as everything else.
+`python3 organizer.py install-app` builds a small SwiftUI app (the Xcode Command Line
+Tools are enough), installs it in `~/Applications`, and puts **✨ Organizer** in
+Music's Scripts menu (the scroll icon between Window and Help). Choosing it pops the
+Organizer panel over Music. The app has no menu bar or Dock icon; closing the panel
+(red button, ⏻, Esc or ⌘Q) quits it, and the menu item starts it again.
 
-## In the Music app (Scripts menu)
-
-Run `python3 organizer.py install-scripts` once. The actions appear in Music's
-Scripts menu (the scroll icon). If that menu doesn't show, turn on Script Editor →
-Settings → General → "Show Script menu in menu bar"; the actions are then in that
-menu whenever Music is in front.
-
-| Action | What it does |
-|---|---|
-| Where Do These Belong | Select songs → up to 3 fitting playlists each → tick, confirm |
-| Discover From Selection | Select songs → lesser-known songs charting now in that vibe → opens them in Music |
-| Artist Playlist… | Type an artist → their best songs for your taste → playlist (songs you don't have open one by one for +) |
-| Move Song… | Select songs in a playlist made by a split → pick the group they belong in (or none); remembered for the next split |
-| Review & Apply Changes | Pick a plan → tick changes → confirm → applied, verified, undo plan saved |
-| Refresh Scan & Metadata | Rescan, fetch metadata for new songs, fill artist playlists with songs you've added |
-
-The first change asks macOS for permission to control Music; allow it.
+The panel reads what's open in Music and offers what fits: split any playlist by
+vibe, "Where do these belong?" and "Discover" for selected songs, artist playlists,
+review & apply with names for new playlists, and undo from the result screen. It talks
+to the organizer through `organizer.py api ...` (JSON), so it uses the same plans,
+checks, audit log and undo as everything else.
 
 ## Command line
 
