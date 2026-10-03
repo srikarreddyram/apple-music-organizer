@@ -19,6 +19,7 @@ Usage:
   python3 organizer.py drop PLAN OP 2,7      Remove tracks from an op before approving it
   python3 organizer.py apply PLAN            Apply approved ops to Music, verify, log, write undo plan
   python3 organizer.py enrich [SOURCE...]    Add metadata: apple, audio, musicbrainz (default), lastfm (needs key)
+  python3 organizer.py install-app           Build and start the menu bar app (♫ icon)
   python3 organizer.py install-scripts       Add the organizer's actions to Music's Scripts menu
   python3 organizer.py discover [--fresh]    Charting songs (or new releases) from lesser-known artists near your taste
 
@@ -416,6 +417,11 @@ SCRIPT_DIRS = [Path.home() / "Library/Music/Scripts",                 # Music's 
                Path.home() / "Library/Scripts/Applications/Music"]    # system Script menu, when Music is in front
 
 
+def cmd_api(args):
+    import api
+    api.main(args.command, args.args)
+
+
 def cmd_ui(args):
     import ui
     ui.main(args.action, args.ids)
@@ -437,6 +443,43 @@ def cmd_install_scripts(args):
     print("\nIn Music, look for the scroll icon in the menu bar (Music's Scripts menu). If it isn't there,")
     print("turn on Script Editor > Settings > General > Show Script menu in menu bar; the actions then")
     print("appear under that menu whenever Music is the frontmost app.")
+
+
+APP_DIR = Path.home() / "Applications" / "Music Organizer.app"
+
+
+def cmd_install_app(args):
+    """Build the SwiftUI menu bar app, install it in ~/Applications and start it."""
+    import plistlib
+    import shutil
+    import subprocess
+    root = Path(__file__).parent.resolve()
+    build = root / "build"
+    build.mkdir(exist_ok=True)
+    print("Building the menu bar app (about a minute)...")
+    proc = subprocess.run(["swiftc", "-parse-as-library", "-swift-version", "5", "-target", "arm64-apple-macosx14.0",
+                           "-O", str(root / "app" / "MusicOrganizer.swift"), "-o", str(build / "MusicOrganizer")],
+                          capture_output=True, text=True)
+    if proc.returncode:
+        sys.exit("Build failed:\n" + proc.stderr[-3000:])
+    subprocess.run(["pkill", "-x", "MusicOrganizer"], capture_output=True)
+    if APP_DIR.exists():
+        shutil.rmtree(APP_DIR)
+    (APP_DIR / "Contents" / "MacOS").mkdir(parents=True)
+    shutil.copy2(build / "MusicOrganizer", APP_DIR / "Contents" / "MacOS" / "MusicOrganizer")
+    with open(APP_DIR / "Contents" / "Info.plist", "wb") as f:
+        plistlib.dump({
+            "CFBundleName": "Music Organizer", "CFBundleDisplayName": "Music Organizer",
+            "CFBundleIdentifier": "com.srikarreddyram.musicorganizer", "CFBundleExecutable": "MusicOrganizer",
+            "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1",
+            "LSMinimumSystemVersion": "14.0", "LSUIElement": True,  # menu bar only, no Dock icon
+            "NSAppleEventsUsageDescription": "Music Organizer reads your library and, when you press Apply, "
+                                             "creates playlists and adds songs in Music.",
+            "OrganizerProject": str(root), "OrganizerPython": sys.executable,
+        }, f)
+    subprocess.run(["codesign", "--force", "--sign", "-", str(APP_DIR)], capture_output=True)
+    subprocess.run(["open", str(APP_DIR)])
+    print(f"Installed {APP_DIR} and started it: look for the ♫ icon in the menu bar.")
 
 
 def cmd_discover(args):
@@ -541,12 +584,18 @@ def main():
     ap_.add_argument("plan")
     ap_.add_argument("--confirm", metavar="PLAN_ID", help="non-interactive confirmation; must equal the plan id")
     ap_.set_defaults(fn=cmd_apply)
+    a = sub.add_parser("api", help="JSON interface for the menu bar app")
+    a.add_argument("command")
+    a.add_argument("args", nargs="*")
+    a.set_defaults(fn=cmd_api)
+
     u = sub.add_parser("ui", help="dialog flows used by the Music Scripts menu")
     u.add_argument("action", choices=["review", "belong", "discover", "refresh", "artist", "move"])
     u.add_argument("ids", nargs="*", metavar="TRACK_ID")
     u.set_defaults(fn=cmd_ui)
 
     sub.add_parser("install-scripts", help="add actions to Music's Scripts menu").set_defaults(fn=cmd_install_scripts)
+    sub.add_parser("install-app", help="build and start the menu bar app").set_defaults(fn=cmd_install_app)
 
     en = sub.add_parser("enrich", help="add metadata from Apple's catalog and preview audio (uses the internet)")
     en.add_argument("sources", nargs="*", choices=["apple", "audio", "musicbrainz", "lastfm"], metavar="SOURCE")

@@ -190,3 +190,18 @@ def delete_playlist(pid):
   editablePlaylist(a.pid).delete();
   return JSON.stringify(null);
 """, {"pid": pid})
+
+
+def current_context():
+    """What's on screen in Music: the playlist being viewed and the selected songs (read-only)."""
+    return run_jxa_json("""
+  const out = { playlist: null, selection: [] };
+  try {
+    const v = m.browserWindows[0].view();
+    out.playlist = { persistentID: v.persistentID(), name: v.name(), smart: false, specialKind: "none" };
+    try { out.playlist.smart = v.smart(); } catch (e) {}
+    try { out.playlist.specialKind = v.specialKind(); } catch (e) { out.playlist.specialKind = "library"; }
+  } catch (e) {}
+  try { out.selection = m.selection().map(t => ({ id: t.persistentID(), name: t.name(), artist: t.artist() })); } catch (e) {}
+  return JSON.stringify(out);
+""", {})

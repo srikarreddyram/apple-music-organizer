@@ -143,6 +143,19 @@ def op_line(op):
     return f"{verb} {plans.target_label(op)}{count}"
 
 
+def approve_with_creates(plan, chosen):
+    """Approve exactly the chosen pending ops, plus the create op of any new playlist they add to."""
+    chosen = set(chosen)
+    for op in plan["ops"]:
+        ref = (op.get("playlist") or {}).get("ref")
+        if op["n"] in chosen and ref:
+            chosen |= {o["n"] for o in plan["ops"] if o["op"] == "create_playlist" and o.get("ref") == ref}
+    for op in plan["ops"]:
+        if op["status"] == "pending":
+            op["approved"] = op["n"] in chosen
+    plans.save_plan(plan)
+
+
 def review():
     pending = [p for p in plans.all_plans() if any(op["status"] == "pending" for op in p["ops"])]
     if not pending:
@@ -160,16 +173,7 @@ def review():
                    multiple=True, ok="Continue")
     if not picks:
         return
-    chosen = {ops[i]["n"] for i in picks}
-    # An add to a new playlist needs its create op too.
-    for i in picks:
-        ref = (ops[i].get("playlist") or {}).get("ref")
-        if ref:
-            chosen |= {o["n"] for o in ops if o["op"] == "create_playlist" and o.get("ref") == ref}
-    for op in plan["ops"]:
-        if op["status"] == "pending":
-            op["approved"] = op["n"] in chosen
-    plans.save_plan(plan)
+    approve_with_creates(plan, {ops[i]["n"] for i in picks})
     pick_names(plan)
     confirm_and_apply(plan)
 
@@ -261,22 +265,15 @@ def fit(track, label, prof, z=None):
     return score, why
 
 
-def belong(ids):
-    lib = load_lib()
+def belong_suggestions(lib, ids, eff=None):
+    """[(track id, playlist, score, why)]: up to 3 fitting playlists per song, best first."""
     tracks = {t["persistentID"]: t for t in lib["tracks"]}
-    eff = labels.merged()
-    unknown = [i for i in ids if i not in tracks]
-    if unknown:
-        alert(f"{len(unknown)} of the selected songs aren't in the last scan. Run “Refresh scan & metadata” "
-              "first, then try again.")
-        ids = [i for i in ids if i in tracks]
-    if not ids:
-        return
+    eff = eff or labels.merged()
     z = similarity.sound_vectors(lib)
     profs = profiles(lib, eff, z)
     model = similarity.SimilarityModel(lib, eff, z)
     rows = []
-    for tid in ids:
+    for tid in [i for i in ids if i in tracks]:
         t = tracks[tid]
         scored = []
         for pr in profs.values():
@@ -298,6 +295,37 @@ def belong(ids):
         for rank, (score, why, pr, bar) in enumerate(scored[:3]):
             if score >= bar[0 if rank == 0 else 1]:
                 rows.append((tid, pr["playlist"], score, why))
+    return rows
+
+
+def add_plan(lib, picks, title, reason):
+    """A plan adding songs to existing playlists; picks: [(track id, playlist)]. Approved, not applied."""
+    tracks = {t["persistentID"]: t for t in lib["tracks"]}
+    by_playlist = {}
+    for tid, p in picks:
+        by_playlist.setdefault(p["persistentID"], (p, []))[1].append(tid)
+    ops = [{"op": "add_tracks", "playlist": {"id": pid, "name": p["name"]},
+            "tracks": [plans.track_ref(tracks[t]) for t in tids], "reason": reason}
+           for pid, (p, tids) in by_playlist.items()]
+    plan = plans.new_plan(title, ops, lib)
+    for op in plan["ops"]:
+        op["approved"] = True
+    plans.save_plan(plan)
+    return plan
+
+
+def belong(ids):
+    lib = load_lib()
+    tracks = {t["persistentID"]: t for t in lib["tracks"]}
+    eff = labels.merged()
+    unknown = [i for i in ids if i not in tracks]
+    if unknown:
+        alert(f"{len(unknown)} of the selected songs aren't in the last scan. Run “Refresh scan & metadata” "
+              "first, then try again.")
+        ids = [i for i in ids if i in tracks]
+    if not ids:
+        return
+    rows = belong_suggestions(lib, ids)
     if not rows:
         alert("No playlist is a clear fit for these songs.")
         return
@@ -307,17 +335,8 @@ def belong(ids):
                    multiple=True, ok="Add")
     if not picks:
         return
-    by_playlist = {}
-    for i in picks:
-        tid, p, score, why = rows[i]
-        by_playlist.setdefault(p["persistentID"], (p, []))[1].append(tid)
-    ops = [{"op": "add_tracks", "playlist": {"id": pid, "name": p["name"]},
-            "tracks": [plans.track_ref(tracks[t]) for t in tids], "reason": "chosen in “Where do these belong?”"}
-           for pid, (p, tids) in by_playlist.items()]
-    plan = plans.new_plan("Where do these belong", ops, lib)
-    for op in plan["ops"]:
-        op["approved"] = True
-    plans.save_plan(plan)
+    plan = add_plan(lib, [(rows[i][0], rows[i][1]) for i in picks], "Where do these belong",
+                    "chosen in “Where do these belong?”")
     confirm_and_apply(plan)
 
 

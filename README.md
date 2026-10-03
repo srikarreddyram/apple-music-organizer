@@ -17,7 +17,17 @@ plans, and only touches your library when you approve a plan.
   label-based features (split, playlist fit) have nothing to work with; you can add
   your own with `label`.
 
-## In the Music app
+## Menu bar app
+
+`python3 organizer.py install-app` builds a small SwiftUI app (Xcode Command Line
+Tools are enough), installs it in `~/Applications` and starts it. Click the ♫ icon in
+the menu bar: the panel reads what's open in Music and offers what fits, e.g. "Split
+“Mood” by vibe" when a playlist is open, or "Where do these belong?" when songs are
+selected. Review changes, pick names for new playlists, apply, and undo from the
+result screen. The app talks to the organizer through `organizer.py api ...` (JSON),
+so it uses the same plans, checks, audit log and undo as everything else.
+
+## In the Music app (Scripts menu)
 
 Run `python3 organizer.py install-scripts` once. The actions appear in Music's
 Scripts menu (the scroll icon). If that menu doesn't show, turn on Script Editor →
