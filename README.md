@@ -29,6 +29,7 @@ menu whenever Music is in front.
 | Where Do These Belong | Select songs → up to 3 fitting playlists each → tick, confirm |
 | Discover From Selection | Select songs → lesser-known songs charting now in that vibe → opens them in Music |
 | Artist Playlist… | Type an artist → their best songs for your taste → playlist (songs you don't have open one by one for +) |
+| Move Song… | Select songs in a playlist made by a split → pick the group they belong in (or none); remembered for the next split |
 | Review & Apply Changes | Pick a plan → tick changes → confirm → applied, verified, undo plan saved |
 | Refresh Scan & Metadata | Rescan, fetch metadata for new songs, fill artist playlists with songs you've added |
 
@@ -40,6 +41,7 @@ The first change asks macOS for permission to control Music; allow it.
 python3 organizer.py scan                 # read the library (read-only)
 python3 organizer.py report               # playlists, duplicates, overlap, genres
 python3 organizer.py enrich               # Apple catalog match, preview audio, MusicBrainz
+python3 organizer.py enrich lastfm        # listener tags; needs LASTFM_API_KEY=... in .env
 python3 organizer.py split "Calling"      # plan vibe playlists from a big mixed one
 python3 organizer.py artist "Travis Scott"
 python3 organizer.py suggest              # artist-playlist gaps, homes for unplaylisted songs
@@ -70,7 +72,9 @@ result against measured preview audio, which the split never looks at: so far gr
 sound only slightly more alike than random groups from the same playlist (about
 x1.1 overall, some groups below x1.0). Data-driven clustering and similarity-based
 refinement were tried and did no better on that independent check, so the simpler,
-explainable rules stay. Treat split plans as a starting point to review, not a
+explainable rules stay. A timbre fingerprint (MFCCs) was also tried: it neither
+improved playlist fit (85.5–86.6% vs 86.8%) nor showed the split groups sounding
+alike, so it is measured and stored but not used. Treat split plans as a starting point to review, not a
 verdict; `label` overrides and re-running `split` are the main way to improve them.
 
 ## Safety

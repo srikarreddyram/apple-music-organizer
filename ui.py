@@ -321,6 +321,61 @@ def belong(ids):
     confirm_and_apply(plan)
 
 
+# --- Move Song… -------------------------------------------------------------------
+
+def organizer_playlists(lib):
+    """Live playlists this tool created from a split: {playlist id: (create op, plan)}."""
+    live = {p["persistentID"] for p in lib["playlists"]}
+    out = {}
+    for plan in plans.all_plans():
+        for op in plan["ops"]:
+            pid = (op.get("result") or {}).get("playlistID")
+            if op["op"] == "create_playlist" and op["status"] == "applied" and op.get("source") and pid in live:
+                out[pid] = (op, plan)
+    return out
+
+
+def move(ids):
+    lib = load_lib()
+    tracks = {t["persistentID"]: t for t in lib["tracks"]}
+    made = organizer_playlists(lib)
+    by_pl = {p["persistentID"]: p for p in lib["playlists"]}
+    # Which split playlist is each selected song in?
+    groups = {}
+    for tid in ids:
+        home = next((pid for pid in made if tid in by_pl[pid]["trackIDs"]), None)
+        if home:
+            groups.setdefault(home, []).append(tid)
+    if not groups:
+        alert("Select songs inside one of the playlists the organizer made from a split, "
+              "then use Move Song… to put them where they belong.")
+        return
+    for home, tids in groups.items():
+        op, _ = made[home]
+        siblings = [(pid, o) for pid, (o, _) in made.items() if o["source"] == op["source"] and pid != home]
+        names_ = ", ".join(tracks[t]["name"] for t in tids[:3]) + (" …" if len(tids) > 3 else "")
+        items = [by_pl[pid]["name"] for pid, _ in siblings] + [f"None of these – keep it only in {op['source']}"]
+        pick = choose(items, f"Move {names_} out of “{by_pl[home]['name']}” to:", ok="Move")
+        if not pick:
+            continue
+        target = siblings[pick[0]] if pick[0] < len(siblings) else None
+        plan_ops = [{"op": "remove_tracks", "playlist": {"id": home, "name": by_pl[home]["name"]},
+                     "tracks": [plans.track_ref(tracks[t]) for t in tids], "reason": "moved with Move Song…"}]
+        if target:
+            plan_ops.append({"op": "add_tracks", "playlist": {"id": target[0], "name": by_pl[target[0]]["name"]},
+                             "tracks": [plans.track_ref(tracks[t]) for t in tids], "reason": "moved with Move Song…"})
+        plan = plans.new_plan("Move Song", plan_ops, lib)
+        for o in plan["ops"]:
+            o["approved"] = True
+        plans.save_plan(plan)
+        # Remember the choice so the next split puts these songs in the same place.
+        manual = labels.load("manual")
+        for t in tids:
+            manual.setdefault(t, {})["group"] = target[1]["group"] if target else "keep-out"
+        labels.save("manual", manual)
+        confirm_and_apply(plan)
+
+
 # --- Discover from selection ------------------------------------------------------
 
 def discover_from(ids):
@@ -438,7 +493,7 @@ def main(action, ids):
     try:
         {"review": lambda: review(), "belong": lambda: belong(ids),
          "discover": lambda: discover_from(ids), "refresh": lambda: refresh(),
-         "artist": lambda: artist_playlist()}[action]()
+         "artist": lambda: artist_playlist(), "move": lambda: move(ids)}[action]()
     except Exception as e:  # noqa: BLE001 - surface any failure to the user instead of dying silently
         alert(f"Something went wrong:\n\n{e}\n\nDetails are in data/ui.log.")
         raise

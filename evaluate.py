@@ -70,17 +70,18 @@ def score_labels_only(ctx, tid, pr, members):
     return ui.fit(ctx.tracks[tid], ctx.eff.get(tid), pr, None)[0]
 
 
-def knn_scorer(k=5, weights=None, theme_bonus=False, calibrate=None):
+def knn_scorer(k=5, weights=None, theme_bonus=False, calibrate=None, timbre=False):
     """Nearest-neighbour scorer with the same artist-playlist and theme rules as the app.
 
     calibrate: None, "sub" (minus the playlist's typical score for any song) or "div" (divided by it).
     """
-    key = ("knn", tuple(sorted((weights or {}).items())))
+    key = ("knn", tuple(sorted((weights or {}).items())), timbre)
 
     def fn(ctx, tid, pr, members):
         from similarity import SimilarityModel
         if key not in ctx.__dict__:
-            ctx.__dict__[key] = SimilarityModel(ctx.lib, ctx.eff, ctx.z, weights)
+            ctx.__dict__[key] = SimilarityModel(ctx.lib, ctx.eff, ctx.z, weights,
+                                                similarity.timbre_vectors(ctx.lib) if timbre else None)
         model = ctx.__dict__[key]
         if pr["artist"]:
             return 2.0 if pr["artist"] in suggest.credited(ctx.tracks[tid]) else -1.0

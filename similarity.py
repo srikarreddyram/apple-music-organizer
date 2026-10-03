@@ -48,8 +48,29 @@ def sound_vectors(lib):
 
 
 
+def timbre_vectors(lib):
+    """Standardised MFCC timbre fingerprints per track id (empty until audio is re-measured).
+
+    Experimental: on the benchmark, adding timbre gave 85.5-86.6% vs 86.8% without, so the
+    app doesn't pass it in. Kept for experiments (evaluate.knn_scorer(..., timbre=True)).
+    """
+    audio = metadata_load("audio")
+    vecs = {t["persistentID"]: audio.get(t["persistentID"], {}).get("mfcc") for t in lib["tracks"]}
+    vecs = {k: v for k, v in vecs.items() if v}
+    if len(vecs) < 50:
+        return {}
+    x = np.array(list(vecs.values()), dtype=float)
+    mean, std = x.mean(axis=0), x.std(axis=0) + 1e-9
+    return {k: (np.array(v) - mean) / std for k, v in vecs.items()}
+
+
+def metadata_load(name):
+    import metadata
+    return metadata.load(name)
+
+
 class SimilarityModel:
-    def __init__(self, lib, eff, z, weights=None):
+    def __init__(self, lib, eff, z, weights=None, timbre=None):
         self.w = dict(WEIGHTS, **(weights or {}))
         tracks = [t for t in lib["tracks"] if t["persistentID"] in eff]
         self.ids = [t["persistentID"] for t in tracks]
@@ -84,6 +105,15 @@ class SimilarityModel:
             d2 = np.maximum(sq[:, None] + sq[None, :] - 2 * zz @ zz.T, 0) / dim
         sound_sim = np.exp(-d2)
         sound_ok = has[:, None] & has[None, :]
+        if timbre and self.w.get("timbre"):
+            # Timbre (what the instruments and production sound like) blends into the sound term.
+            tdim = len(next(iter(timbre.values())))
+            tt = np.array([timbre[p] if p in timbre else np.zeros(tdim) for p in self.ids])
+            with np.errstate(all="ignore"):
+                tsq = (tt ** 2).sum(axis=1)
+                td2 = np.maximum(tsq[:, None] + tsq[None, :] - 2 * tt @ tt.T, 0) / tdim
+            tw = self.w["timbre"]
+            sound_sim = (sound_sim + tw * np.exp(-td2)) / (1 + tw)
 
         artists = [credited(t) for t in tracks]
         by_artist = {}

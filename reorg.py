@@ -12,6 +12,7 @@ import names
 from plans import track_ref
 from suggest import song_key
 
+KEEP_OUT = "keep-out"  # manual group: leave the song only in the original playlist
 FEELS = {"romantic", "heartbreak", "melancholic", "introspective", "nostalgic"}
 BUCKETS = ["Gym", "Party", "Cruise", "Feels", "Late Night"]
 # Where a too-small bucket goes instead, in order of preference.
@@ -101,6 +102,16 @@ def split_ops(lib, playlist, min_size=10, used=None, min_family=4, rare=0.15, do
     groups = OrderedDict((b, []) for b in BUCKETS)
     family_groups, left_out = OrderedDict(), []
     for pid in labelled:
+        chosen = eff[pid].get("group")  # set by "Move Song…" or `label --group`
+        if chosen == KEEP_OUT:
+            left_out.append(pid)
+            continue
+        if chosen in groups:
+            groups[chosen].append(pid)
+            continue
+        if chosen in labels.FAMILIES:
+            family_groups.setdefault(chosen, []).append(pid)
+            continue
         if fam[pid] in misfit:
             family_groups.setdefault(fam[pid], []).append(pid)
         else:
@@ -127,25 +138,26 @@ def split_ops(lib, playlist, min_size=10, used=None, min_family=4, rare=0.15, do
     source = playlist["name"].strip()
     ops = []
 
-    def add_group(ref, ids, name_bucket, label, about):
+    def add_group(ref, ids, name_bucket, label, about, group):
         ids.sort(key=order.get)
         prof = names.profile(ids, tracks, eff)
         opts = names.options(prof, name_bucket, avoid=used, seed=ref, preferred=names.preferred(ref))
         name = opts[0] if opts else f"{source} · {label}"
         used.add(name)
         ops.append({"op": "create_playlist", "name": name, "ref": ref, "bucket": name_bucket, "nameProfile": prof,
-                    "nameOptions": opts, "reason": f"{label} split of {source!r}: {about}"})
+                    "nameOptions": opts, "source": source, "group": group,
+                    "reason": f"{label} split of {source!r}: {about}"})
         ops.append({"op": "add_tracks", "playlist": {"ref": ref, "name": name},
                     "tracks": [{**track_ref(tracks[i]), "note": note(eff[i])} for i in ids],
                     "reason": f"{len(ids)} of {len(order)} tracks from {source!r}; the original stays as it is"})
 
     for b, ids in groups.items():
         if ids:
-            add_group(f"{source}-{b}", ids, b, b, ABOUT[b])
+            add_group(f"{source}-{b}", ids, b, b, ABOUT[b], b)
     for key, (f, ids) in parts.items():
         vibe = Counter(bucket(eff[i]) for i in ids).most_common(1)[0][0]
         add_group(f"{source}-{key}", ids, vibe, FAMILY_LABEL.get(f, f),
-                  f"{FAMILY_LABEL.get(f, f).lower()} songs that don't blend with the rest")
+                  f"{FAMILY_LABEL.get(f, f).lower()} songs that don't blend with the rest", f)
     if unlabelled:
         ops.append({"op": "create_playlist", "name": f"{source} · Unsorted", "ref": f"{source}-unsorted",
                     "reason": "tracks with no labels yet"})

@@ -47,7 +47,7 @@ OUT = DATA / "discover"
 HOUR, DAY = 3600, 86400
 _last_call = defaultdict(float)
 MIN_INTERVAL = {"itunes.apple.com": 3.2, "api.deezer.com": 0.15, "api.listenbrainz.org": 1.0,
-                "musicbrainz.org": 1.1}
+                "musicbrainz.org": 1.1, "ws.audioscrobbler.com": 0.25}
 
 
 class FetchError(RuntimeError):

@@ -160,6 +160,29 @@ def decode(url, track_id):
     return x.astype(np.float32) / 32768.0
 
 
+def mel_filters(n_mels=40, fmin=40, fmax=8000):
+    """Triangular mel filterbank over the rfft bins."""
+    mel = lambda f: 2595 * np.log10(1 + f / 700)
+    inv = lambda m: 700 * (10 ** (m / 2595) - 1)
+    edges = inv(np.linspace(mel(fmin), mel(fmax), n_mels + 2))
+    freqs = np.fft.rfftfreq(N_FFT, 1 / SR)
+    fb = np.zeros((n_mels, len(freqs)))
+    for i in range(n_mels):
+        lo, mid, hi = edges[i], edges[i + 1], edges[i + 2]
+        fb[i] = np.clip(np.minimum((freqs - lo) / (mid - lo), (hi - freqs) / (hi - mid)), 0, None)
+    return fb
+
+
+def mfcc_summary(power, loud, n=13):
+    """Timbre fingerprint: mean and spread of MFCCs 1-12 over the loud frames (24 numbers)."""
+    with np.errstate(all="ignore"):  # macOS Accelerate BLAS raises spurious FP warnings
+        logmel = np.log(power[loud] @ mel_filters().T + 1e-10)
+        k = np.arange(logmel.shape[1])
+        dct = np.cos(np.pi / logmel.shape[1] * (k[None, :] + 0.5) * np.arange(n)[:, None])
+        c = logmel @ dct.T
+    return [round(float(v), 3) for v in np.concatenate([c[:, 1:].mean(axis=0), c[:, 1:].std(axis=0)])]
+
+
 def analyze(x):
     frames = np.lib.stride_tricks.sliding_window_view(x, N_FFT)[::HOP] * np.hanning(N_FFT)
     mag = np.abs(np.fft.rfft(frames, axis=1))
@@ -203,6 +226,7 @@ def analyze(x):
         "noisiness": round(float(np.median(flatness[loud])), 3),
         "highShare": round(float((power[:, freqs > 4000].sum(axis=1) / total)[loud].mean()), 4),  # hats, distortion
         "fluxMean": round(float(np.log1p(raw_flux[loud[1:]].mean())), 3),  # how hard and often the sound changes
+        "mfcc": mfcc_summary(power, loud),  # timbre: what the instruments and production sound like
     }
 
 

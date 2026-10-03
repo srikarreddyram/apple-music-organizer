@@ -235,3 +235,49 @@ class CrossLanguageArtistTests(SandboxTest):
         first = self.dialogs.shown[0][2][0]
         self.assertIn("South", first)
         self.assertIn("NEW", self.music.playlists["TAM"]["trackIDs"])
+
+
+class MoveSongTests(SandboxTest):
+    tracks = TRACKS
+    playlists = PLAYLISTS
+
+    def setUp(self):
+        super().setUp()
+        self.set_labels(LABELS)
+        lib = ui.load_lib()
+        ops, _ = reorg.split_ops(lib, lib["playlists"][3], min_size=1)
+        plan = plans.new_plan("Split Them", ops, lib)
+        plans.set_approval(plan, "all", True)
+        plans.apply_plan(plan)
+        from organizer import scan
+        scan()
+
+    def made(self, ref):
+        plan = next(p for p in plans.all_plans() if p["title"] == "Split Them")
+        op = next(o for o in plan["ops"] if o.get("ref") == ref and o["op"] == "create_playlist")
+        return op["result"]["playlistID"]
+
+    def test_move_to_a_sibling_and_remember_it(self):
+        gym, late = self.made("Them-Gym"), self.made("Them-Late Night")
+        siblings = [p["name"] for pid, p in self.music.playlists.items() if pid.startswith("NEW") and pid != gym]
+        self.dialogs.choices = [[siblings.index(self.music.playlists[late]["name"])]]
+        ui.move(["RAP2"])
+        self.assertNotIn("RAP2", self.music.playlists[gym]["trackIDs"])
+        self.assertIn("RAP2", self.music.playlists[late]["trackIDs"])
+        self.assertEqual(labels.load("manual")["RAP2"]["group"], "Late Night")
+        # The next split keeps the song where it was moved.
+        lib = ui.load_lib()
+        ops, _ = reorg.split_ops(lib, lib["playlists"][3], min_size=1)
+        late_add = next(o for o in ops if o["op"] == "add_tracks" and o["playlist"]["ref"] == "Them-Late Night")
+        self.assertIn("RAP2", [t["id"] for t in late_add["tracks"]])
+
+    def test_keep_out_removes_it_from_the_split_only(self):
+        gym = self.made("Them-Gym")
+        n_siblings = sum(1 for pid in self.music.playlists if pid.startswith("NEW")) - 1
+        self.dialogs.choices = [[n_siblings]]  # "None of these – keep it only in Them"
+        ui.move(["RAP2"])
+        self.assertNotIn("RAP2", self.music.playlists[gym]["trackIDs"])
+        self.assertIn("RAP2", self.music.playlists["PMIX"]["trackIDs"])
+        lib = ui.load_lib()
+        _, left = reorg.split_ops(lib, lib["playlists"][3], min_size=1)
+        self.assertIn("RAP2", [t["id"] for t in left])

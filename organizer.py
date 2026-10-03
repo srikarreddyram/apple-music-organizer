@@ -18,7 +18,7 @@ Usage:
   python3 organizer.py names PLAN [--reroll N]  Name options for new playlists; rename PLAN OP "Name"
   python3 organizer.py drop PLAN OP 2,7      Remove tracks from an op before approving it
   python3 organizer.py apply PLAN            Apply approved ops to Music, verify, log, write undo plan
-  python3 organizer.py enrich [SOURCE...]    Add metadata: apple, audio, musicbrainz (default: all)
+  python3 organizer.py enrich [SOURCE...]    Add metadata: apple, audio, musicbrainz (default), lastfm (needs key)
   python3 organizer.py install-scripts       Add the organizer's actions to Music's Scripts menu
   python3 organizer.py discover [--fresh]    Charting songs (or new releases) from lesser-known artists near your taste
 
@@ -241,7 +241,7 @@ def cmd_label(args):
     manual = labels.load("manual")
     current = labels.merged().get(args.track, {})
     change = {k: v for k, v in (("mood", args.mood), ("energy", args.energy), ("language", args.language),
-                                ("style", args.style)) if v is not None}
+                                ("style", args.style), ("group", args.group)) if v is not None}
     if args.contexts is not None:
         change["contexts"] = [c for c in args.contexts.split(",") if c]
     errors = labels.validate({**current, **change, "confidence": "high"}) if change else []
@@ -380,12 +380,18 @@ def cmd_enrich(args):
         data = metadata.enrich_musicbrainz(lib, progress=progress)
         hits = sum(1 for v in data.values() if not v.get("miss"))
         print(f"musicbrainz: {hits} of {len(data)} artists found")
+    if "lastfm" in sources:
+        import lastfm
+        data = lastfm.enrich(lib, progress=progress)
+        own = sum(1 for v in data.values() if v.get("from") == "track")
+        print(f"last.fm: {own} of {len(data)} songs have their own listener tags (others use the artist's)")
 
 
 MENU_ACTIONS = [  # (menu title, ui action, needs a selection)
     ("Organizer – Where Do These Belong", "belong", True),
     ("Organizer – Discover From Selection", "discover", True),
     ("Organizer – Artist Playlist…", "artist", False),
+    ("Organizer – Move Song…", "move", True),
     ("Organizer – Review & Apply Changes", "review", False),
     ("Organizer – Refresh Scan & Metadata", "refresh", False),
 ]
@@ -467,6 +473,8 @@ def main():
     lb.add_argument("--contexts", help="comma separated: " + ",".join(labels.CONTEXTS))
     lb.add_argument("--language", choices=labels.LANGUAGES)
     lb.add_argument("--style", choices=labels.STYLES)
+    lb.add_argument("--group", choices=reorg.BUCKETS + list(labels.FAMILIES) + [reorg.KEEP_OUT],
+                    help="force the split group (or keep-out: leave it only in the original)")
     lb.set_defaults(fn=cmd_label)
 
     sg = sub.add_parser("suggest")
@@ -517,14 +525,14 @@ def main():
     ap_.add_argument("--confirm", metavar="PLAN_ID", help="non-interactive confirmation; must equal the plan id")
     ap_.set_defaults(fn=cmd_apply)
     u = sub.add_parser("ui", help="dialog flows used by the Music Scripts menu")
-    u.add_argument("action", choices=["review", "belong", "discover", "refresh", "artist"])
+    u.add_argument("action", choices=["review", "belong", "discover", "refresh", "artist", "move"])
     u.add_argument("ids", nargs="*", metavar="TRACK_ID")
     u.set_defaults(fn=cmd_ui)
 
     sub.add_parser("install-scripts", help="add actions to Music's Scripts menu").set_defaults(fn=cmd_install_scripts)
 
     en = sub.add_parser("enrich", help="add metadata from Apple's catalog and preview audio (uses the internet)")
-    en.add_argument("sources", nargs="*", choices=["apple", "audio", "musicbrainz"], metavar="SOURCE")
+    en.add_argument("sources", nargs="*", choices=["apple", "audio", "musicbrainz", "lastfm"], metavar="SOURCE")
     en.add_argument("--country", default="in", help="Apple storefront for catalog matching")
     en.add_argument("--retry-misses", action="store_true", help="try catalog matching again for unmatched tracks")
     en.add_argument("--reanalyze", action="store_true", help="re-measure all previews (after analysis changes)")
