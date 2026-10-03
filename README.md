@@ -4,6 +4,19 @@ Local-first organizer for the Music app on macOS. It reads your library through
 Music's own scripting interface, adds metadata, proposes changes as reviewable
 plans, and only touches your library when you approve a plan.
 
+> Status: experimental. The read-only parts (scan, report, metadata, discovery) are
+> stable; the playlist-fit and split models are still being tuned and evaluated.
+
+## Setup
+
+- macOS with the Music app; Python 3.9+ with NumPy and SciPy (the Xcode Command Line
+  Tools Python already has both). No other dependencies, no accounts or API keys.
+- `python3 organizer.py scan` reads your library; macOS asks once to let the
+  terminal control Music.
+- Mood/energy/style labels come from an AI pass (see below). Without them, the
+  label-based features (split, playlist fit) have nothing to work with; you can add
+  your own with `label`.
+
 ## In the Music app
 
 Run `python3 organizer.py install-scripts` once. The actions appear in Music's
@@ -58,3 +71,7 @@ python3 -m unittest discover tests        # tests against a fake Music app
 | Claude | mood, energy, context, language, style + confidence | AI-inferred |
 | You (`label`) | overrides | manual |
 | Deezer, Apple charts, ListenBrainz | related artists, fan counts, charts | discovery only |
+
+## License
+
+MIT, see [LICENSE](LICENSE).
