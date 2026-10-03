@@ -321,7 +321,7 @@ def cmd_enrich(args):
     progress = lambda msg: print(f"  {msg}", file=sys.stderr, flush=True)
     sources = args.sources or ["apple", "audio", "musicbrainz"]
     if "apple" in sources:
-        data = metadata.enrich_apple(lib, country=args.country, progress=progress)
+        data = metadata.enrich_apple(lib, country=args.country, progress=progress, retry_misses=args.retry_misses)
         hits = sum(1 for v in data.values() if not v.get("miss"))
         print(f"apple: {hits} of {len(data)} tracks matched in the catalog")
     if "audio" in sources:
@@ -465,6 +465,7 @@ def main():
     en = sub.add_parser("enrich", help="add metadata from Apple's catalog and preview audio (uses the internet)")
     en.add_argument("sources", nargs="*", choices=["apple", "audio", "musicbrainz"], metavar="SOURCE")
     en.add_argument("--country", default="in", help="Apple storefront for catalog matching")
+    en.add_argument("--retry-misses", action="store_true", help="try catalog matching again for unmatched tracks")
     en.add_argument("--reanalyze", action="store_true", help="re-measure all previews (after analysis changes)")
     en.set_defaults(fn=cmd_enrich)
 

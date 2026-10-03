@@ -51,28 +51,62 @@ def strip_title(name):
     return re.sub(r"\s*[\(\[](feat|ft|with)[^\)\]]*[\)\]]", "", name or "", flags=re.I).strip()
 
 
+def score_candidate(r, t):
+    if song_key({"name": r.get("trackName"), "artist": r.get("artistName")}) != song_key(t):
+        return 0
+    score = 1
+    if norm(r.get("collectionName")) == norm(t["album"]):
+        score += 2
+    if t["duration"] and r.get("trackTimeMillis") and abs(r["trackTimeMillis"] / 1000 - t["duration"]) < 3:
+        score += 2
+    if r.get("trackExplicitness") == "explicit":
+        score += 0.5  # library copies are usually the explicit edition when one exists
+    return score
+
+
+def album_lookup_candidates(t, artist, country):
+    """Songs from the artist's matching album. Apple's search hides explicit releases, lookups don't."""
+    q = urllib.parse.quote(artist)
+    found = get_json(f"https://itunes.apple.com/search?term={q}&entity=musicArtist&country={country}&limit=5",
+                     90 * DAY).get("results", [])
+    a = next((x for x in found if norm(x["artistName"]) == norm(artist)), None)
+    if not a:
+        return []
+    albums = get_json(f"https://itunes.apple.com/lookup?id={a['artistId']}&entity=album&limit=200&country={country}",
+                      30 * DAY).get("results", [])
+    want = norm(t["album"])
+    hits = [x for x in albums if x.get("wrapperType") == "collection" and norm(x.get("collectionName")) == want]
+    if not hits:  # singles are often listed as "Title - Single"
+        hits = [x for x in albums if x.get("wrapperType") == "collection"
+                and want and (want in norm(x.get("collectionName")) or norm(x.get("collectionName")) in want)]
+    out = []
+    for album in hits[:2]:
+        songs = get_json(f"https://itunes.apple.com/lookup?id={album['collectionId']}&entity=song&country={country}",
+                         30 * DAY).get("results", [])
+        out += [r for r in songs if r.get("wrapperType") == "track"]
+    return out
+
+
 def match_apple(t, country):
     """Best catalog match for a track, or None. Same song is required; album and length decide editions."""
     artist = credit_names(t)[0] if credit_names(t) else (t["artist"] or "")
-    want = song_key(t)
     best, best_score = None, 0
+
+    def consider(results):
+        nonlocal best, best_score
+        for r in results:
+            score = score_candidate(r, t)
+            if score > best_score:
+                best, best_score = r, score
+
     for term in (f"{artist} {strip_title(t['name'])}", f"{strip_title(t['name'])} {t['album'] or ''}"):
         url = ("https://itunes.apple.com/search?" +
                urllib.parse.urlencode({"term": term, "entity": "song", "country": country, "limit": 15}))
-        for r in get_json(url, 90 * DAY).get("results", []):
-            if song_key({"name": r.get("trackName"), "artist": r.get("artistName")}) != want:
-                continue
-            score = 1
-            if norm(r.get("collectionName")) == norm(t["album"]):
-                score += 2
-            if t["duration"] and r.get("trackTimeMillis") and abs(r["trackTimeMillis"] / 1000 - t["duration"]) < 3:
-                score += 2
-            if r.get("trackExplicitness") == "explicit":
-                score += 0.5  # library copies are usually the explicit edition when one exists
-            if score > best_score:
-                best, best_score = r, score
+        consider(get_json(url, 90 * DAY).get("results", []))
         if best_score >= 3:
             break
+    if best_score < 3:
+        consider(album_lookup_candidates(t, artist, country))
     if not best:
         return None
     return {
@@ -86,9 +120,10 @@ def match_apple(t, country):
     }
 
 
-def enrich_apple(lib, country="in", progress=print, save_every=10):
+def enrich_apple(lib, country="in", progress=print, save_every=10, retry_misses=False):
     data = load("apple")
-    todo = [t for t in lib["tracks"] if t["persistentID"] not in data]
+    todo = [t for t in lib["tracks"] if t["persistentID"] not in data
+            or (retry_misses and data[t["persistentID"]].get("miss"))]
     for i, t in enumerate(todo, 1):
         progress(f"apple catalog {i}/{len(todo)}: {t['name']} - {t['artist']}")
         try:
