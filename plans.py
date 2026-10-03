@@ -98,7 +98,8 @@ def print_plan(plan, verbose=True):
             print(f"        why: {op['reason']}")
         if verbose:
             for i, t in enumerate(op.get("tracks") or [], 1):
-                print(f"        {i:>3}. {t['name']} - {t['artist']}")
+                extra = f"   [{t['note']}]" if t.get("note") else ""
+                print(f"        {i:>3}. {t['name']} - {t['artist']}{extra}")
         if op.get("result") and op["status"] != "pending":
             print(f"        result: {op['result'].get('detail')}")
 

@@ -4,6 +4,8 @@
 Usage:
   python3 organizer.py scan                  Snapshot the library into data/inventory.json
   python3 organizer.py report                Summarize playlists, duplicates and overlap
+  python3 organizer.py split PLAYLIST...     Plan splitting big mixed playlists into vibe playlists
+  python3 organizer.py label TRACK ...       Override a track's mood/energy/context/language/style
   python3 organizer.py suggest [NAME...]     Write suggested change plans (artist-gaps, genre-homes)
   python3 organizer.py draft ...             Write a hand-made change plan
   python3 organizer.py plans                 List change plans and their status
@@ -12,6 +14,7 @@ Usage:
   python3 organizer.py drop PLAN OP 2,7      Remove tracks from an op before approving it
   python3 organizer.py apply PLAN            Apply approved ops to Music, verify, log, write undo plan
   python3 organizer.py enrich [SOURCE...]    Add metadata: apple, audio, musicbrainz (default: all)
+  python3 organizer.py install-scripts       Add the organizer's actions to Music's Scripts menu
   python3 organizer.py discover [--fresh]    Charting songs (or new releases) from lesser-known artists near your taste
 
 Nothing changes in Music except through `apply`, which only runs approved ops
@@ -26,18 +29,20 @@ from datetime import datetime
 from pathlib import Path
 
 import discover
+import labels
 import metadata
 import music_bridge
 import plans
+import reorg
 import suggest
 
 DATA = Path(__file__).parent / "data"
 INVENTORY = DATA / "inventory.json"
 
 
-def cmd_scan(args):
+def scan():
+    """Read the library from Music, save it as the inventory plus a snapshot, and return it."""
     DATA.mkdir(exist_ok=True)
-    print("Reading library from Music (read-only)...")
     lib = music_bridge.read_library()
     lib["scannedAt"] = datetime.now().isoformat(timespec="seconds")
     text = json.dumps(lib, indent=1, ensure_ascii=False)
@@ -45,6 +50,12 @@ def cmd_scan(args):
     snap = DATA / "snapshots" / f"inventory-{lib['scannedAt'].replace(':', '')}.json"
     snap.parent.mkdir(exist_ok=True)
     snap.write_text(text)
+    return lib
+
+
+def cmd_scan(args):
+    print("Reading library from Music (read-only)...")
+    lib = scan()
     print(f"{len(lib['tracks'])} tracks, {len(lib['playlists'])} playlists -> {INVENTORY}")
 
 
@@ -127,6 +138,40 @@ def cmd_suggest(args):
         n = sum(len(o.get("tracks") or []) for o in ops)
         print(f"{name}: {len(ops)} ops, {n} tracks -> {plan['id']}")
     print("\nReview with: python3 organizer.py review PLAN")
+
+
+def cmd_split(args):
+    lib = load_inventory()
+    ops = []
+    for ref in args.playlists:
+        p = find_playlist(lib, ref)
+        ops += reorg.split_ops(lib, p, min_size=args.min_size)
+    names = ", ".join(find_playlist(lib, r)["name"].strip() for r in args.playlists)
+    plan = plans.new_plan(f"Split {names}", ops, lib)
+    plans.save_plan(plan)
+    plans.print_plan(plan, verbose=args.verbose)
+    print(f"\nSaved {plan['id']}. See every track with: python3 organizer.py review {plan['id']}")
+
+
+def cmd_label(args):
+    lib = load_inventory()
+    tracks = {t["persistentID"]: t for t in lib["tracks"]}
+    if args.track not in tracks:
+        sys.exit(f"unknown track ID {args.track}")
+    manual = labels.load("manual")
+    current = labels.merged().get(args.track, {})
+    change = {k: v for k, v in (("mood", args.mood), ("energy", args.energy), ("language", args.language),
+                                ("style", args.style)) if v is not None}
+    if args.contexts is not None:
+        change["contexts"] = [c for c in args.contexts.split(",") if c]
+    errors = labels.validate({**current, **change, "confidence": "high"}) if change else []
+    if errors:
+        sys.exit("invalid: " + "; ".join(errors))
+    if change:
+        manual[args.track] = {**manual.get(args.track, {}), **change}
+        labels.save("manual", manual)
+    t = tracks[args.track]
+    print(f"{t['name']} - {t['artist']}: {json.dumps(labels.merged().get(args.track, {}), ensure_ascii=False)}")
 
 
 def find_playlist(lib, ref):
@@ -234,6 +279,39 @@ def cmd_enrich(args):
         print(f"musicbrainz: {hits} of {len(data)} artists found")
 
 
+MENU_ACTIONS = [  # (menu title, ui action, needs a selection)
+    ("Organizer – Where Do These Belong", "belong", True),
+    ("Organizer – Discover From Selection", "discover", True),
+    ("Organizer – Review & Apply Changes", "review", False),
+    ("Organizer – Refresh Scan & Metadata", "refresh", False),
+]
+SCRIPT_DIRS = [Path.home() / "Library/Music/Scripts",                 # Music's own Scripts menu
+               Path.home() / "Library/Scripts/Applications/Music"]    # system Script menu, when Music is in front
+
+
+def cmd_ui(args):
+    import ui
+    ui.main(args.action, args.ids)
+
+
+def cmd_install_scripts(args):
+    import subprocess
+    template = (Path(__file__).parent / "extension" / "launch.applescript").read_text()
+    for d in SCRIPT_DIRS:
+        d.mkdir(parents=True, exist_ok=True)
+        for title, action, selection in MENU_ACTIONS:
+            src = (template.replace("{{ACTION}}", action).replace("{{SELECTION}}", str(selection).lower())
+                   .replace("{{PROJECT}}", str(Path(__file__).parent.resolve())).replace("{{PYTHON}}", sys.executable))
+            out = d / f"{title}.scpt"
+            proc = subprocess.run(["osacompile", "-o", str(out), "-e", src], capture_output=True, text=True)
+            if proc.returncode:
+                sys.exit(f"could not compile {title}: {proc.stderr}")
+        print(f"installed {len(MENU_ACTIONS)} scripts in {d}")
+    print("\nIn Music, look for the scroll icon in the menu bar (Music's Scripts menu). If it isn't there,")
+    print("turn on Script Editor > Settings > General > Show Script menu in menu bar; the actions then")
+    print("appear under that menu whenever Music is the frontmost app.")
+
+
 def cmd_discover(args):
     lib = load_inventory()
     progress = lambda msg: print(f"  {msg}", file=sys.stderr)
@@ -256,6 +334,21 @@ def main():
     r = sub.add_parser("report")
     r.add_argument("--limit", type=int, default=25)
     r.set_defaults(fn=cmd_report)
+
+    sp = sub.add_parser("split", help="plan vibe-based splits of big playlists")
+    sp.add_argument("playlists", nargs="+", metavar="PLAYLIST")
+    sp.add_argument("--min-size", type=int, default=10, help="merge smaller groups into their nearest neighbour")
+    sp.add_argument("--verbose", action="store_true", help="list every track")
+    sp.set_defaults(fn=cmd_split)
+
+    lb = sub.add_parser("label", help="override labels for one track (shows them if no options)")
+    lb.add_argument("track", metavar="TRACK_ID")
+    lb.add_argument("--mood", choices=labels.MOODS)
+    lb.add_argument("--energy", type=int, choices=range(1, 6))
+    lb.add_argument("--contexts", help="comma separated: " + ",".join(labels.CONTEXTS))
+    lb.add_argument("--language", choices=labels.LANGUAGES)
+    lb.add_argument("--style", choices=labels.STYLES)
+    lb.set_defaults(fn=cmd_label)
 
     sg = sub.add_parser("suggest")
     sg.add_argument("names", nargs="*", help=", ".join(suggest.GENERATORS))
@@ -293,6 +386,13 @@ def main():
     ap_.add_argument("plan")
     ap_.add_argument("--confirm", metavar="PLAN_ID", help="non-interactive confirmation; must equal the plan id")
     ap_.set_defaults(fn=cmd_apply)
+    u = sub.add_parser("ui", help="dialog flows used by the Music Scripts menu")
+    u.add_argument("action", choices=["review", "belong", "discover", "refresh"])
+    u.add_argument("ids", nargs="*", metavar="TRACK_ID")
+    u.set_defaults(fn=cmd_ui)
+
+    sub.add_parser("install-scripts", help="add actions to Music's Scripts menu").set_defaults(fn=cmd_install_scripts)
+
     en = sub.add_parser("enrich", help="add metadata from Apple's catalog and preview audio (uses the internet)")
     en.add_argument("sources", nargs="*", choices=["apple", "audio", "musicbrainz"], metavar="SOURCE")
     en.add_argument("--country", default="in", help="Apple storefront for catalog matching")

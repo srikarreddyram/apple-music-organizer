@@ -255,12 +255,14 @@ def apple_song(name, artist, country):
 
 # --- Trending mode -----------------------------------------------------------
 
-def trending(lib, countries=("in", "us"), genres=8, seeds=30, max_ratio=2.0, limit=30, progress=print):
+def trending(lib, countries=("in", "us"), genres=8, seeds=30, max_ratio=2.0, limit=30, progress=print,
+             owned=None):
+    """`lib` defines the taste; `owned` (default: lib's tracks) is what never gets suggested."""
     now = datetime.now(timezone.utc)
     taste = taste_profile(lib, now)
     related, seed_fans = related_graph(taste, seeds, progress)
     baselines = fan_baselines(taste, seed_fans)
-    owned = {song_key(t) for t in lib["tracks"]}
+    owned = {song_key(t) for t in (owned or lib["tracks"])}
     max_w = top_artists(taste, 1)[0]["weight"]
 
     # Gather chart songs, merging the same song across charts.
