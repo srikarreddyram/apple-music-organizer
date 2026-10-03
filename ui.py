@@ -13,6 +13,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import artist
 import discover
 import labels
 import metadata
@@ -277,6 +278,67 @@ def discover_from(ids):
             subprocess.run(["open", picks[i]["url"]])
 
 
+# --- Artist playlist ---------------------------------------------------------------
+
+def ask(prompt, default=""):
+    script = f'''
+on run argv
+    activate
+    set r to display dialog (item 1 of argv) with title "{TITLE}" default answer (item 2 of argv) ¬
+        buttons {{"Cancel", "Go"}} default button "Go"
+    return text returned of r
+end run'''
+    code, out = osa(script, prompt, default)
+    return out.strip() if code == 0 else None
+
+
+def artist_playlist():
+    name = ask("Which artist? I'll pick their best songs for your taste.")
+    if not name:
+        return
+    lib = load_lib()
+    notify(f"Listening to {name}'s catalog… this takes about a minute.")
+    result = artist.best_songs(lib, name, progress=lambda m: None)
+    picks = result["picks"]
+    items = [f"{'✓' if p['libraryID'] else '+'} {p['name']}" for p in picks]
+    sel = choose(items, f"{result['artist']}: best for you (✓ already yours, + needs adding in Music).\n"
+                        "Untick anything you don't want:", multiple=True, ok="Create", preselect_all=True)
+    if not sel:
+        return
+    result["picks"] = [picks[i] for i in sel]
+    ops, waiting = artist.plan_ops(lib, result)
+    plan = plans.new_plan(f"Artist playlist: {result['artist']}", ops, lib)
+    plan["waiting"] = waiting
+    for op in plan["ops"]:
+        op["approved"] = True
+    plans.save_plan(plan)
+    confirm_and_apply(plan)
+    if not waiting or plan["ops"][0]["status"] != "applied":
+        return
+    if alert(f"{len(waiting)} songs aren't in your library yet. I'll open them one at a time in Music; "
+             "click + (Add to Library) on each, then come back here.", ("Skip", "Start"), "Start") != "Start":
+        return
+    for i, w in enumerate(waiting, 1):
+        subprocess.run(["open", w["url"]])
+        if alert(f"{i}/{len(waiting)}: {w['name']}\n\nAdd it with + in Music, then continue.",
+                 ("Stop", "Next"), "Next") != "Next":
+            break
+    notify("Checking your library for the added songs…")
+    lib = rescan()
+    ops, still = artist.fill_ops(lib, plan)
+    plan["waiting"] = still
+    plans.save_plan(plan)
+    if not ops:
+        alert("None of them showed up in the library yet. Run “Refresh” later; "
+              "the playlist will be filled from Review & Apply.")
+        return
+    fill = plans.new_plan(f"Fill {plan['title']}", ops, lib)
+    for op in fill["ops"]:
+        op["approved"] = True
+    plans.save_plan(fill)
+    confirm_and_apply(fill)
+
+
 # --- Refresh -----------------------------------------------------------------------
 
 def refresh():
@@ -288,6 +350,14 @@ def refresh():
     metadata.enrich_apple(lib, progress=lambda m: None)
     metadata.enrich_audio(lib, progress=lambda m: None)
     metadata.enrich_musicbrainz(lib, progress=lambda m: None)
+    for plan in plans.all_plans():  # artist playlists waiting on songs you've now added
+        ops, still = artist.fill_ops(lib, plan)
+        if ops:
+            fill = plans.new_plan(f"Fill {plan['title']}", ops, lib)
+            plans.save_plan(fill)
+            plan["waiting"] = still
+            plans.save_plan(plan)
+            notify(f"{len(ops[0]['tracks'])} songs ready for {plan['title']} – see Review & Apply.")
     unlabelled = [t for t in lib["tracks"] if t["persistentID"] not in labels.merged()]
     msg = "Metadata is up to date."
     if unlabelled:
@@ -298,7 +368,8 @@ def refresh():
 def main(action, ids):
     try:
         {"review": lambda: review(), "belong": lambda: belong(ids),
-         "discover": lambda: discover_from(ids), "refresh": lambda: refresh()}[action]()
+         "discover": lambda: discover_from(ids), "refresh": lambda: refresh(),
+         "artist": lambda: artist_playlist()}[action]()
     except Exception as e:  # noqa: BLE001 - surface any failure to the user instead of dying silently
         alert(f"Something went wrong:\n\n{e}\n\nDetails are in data/ui.log.")
         raise

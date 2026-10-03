@@ -4,6 +4,8 @@
 Usage:
   python3 organizer.py scan                  Snapshot the library into data/inventory.json
   python3 organizer.py report                Summarize playlists, duplicates and overlap
+  python3 organizer.py artist "NAME"         Plan a playlist of that artist's best songs for your taste
+  python3 organizer.py fill                  Add songs you've since added to the library to artist playlists
   python3 organizer.py split PLAYLIST...     Plan splitting big mixed playlists into vibe playlists
   python3 organizer.py label TRACK ...       Override a track's mood/energy/context/language/style
   python3 organizer.py suggest [NAME...]     Write suggested change plans (artist-gaps, genre-homes)
@@ -28,6 +30,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+import artist
 import discover
 import labels
 import metadata
@@ -138,6 +141,43 @@ def cmd_suggest(args):
         n = sum(len(o.get("tracks") or []) for o in ops)
         print(f"{name}: {len(ops)} ops, {n} tracks -> {plan['id']}")
     print("\nReview with: python3 organizer.py review PLAN")
+
+
+def cmd_artist(args):
+    lib = load_inventory()
+    result = artist.best_songs(lib, args.name, country=args.country, size=args.size,
+                               progress=lambda m: print(f"  {m}", file=sys.stderr))
+    if not result["soundUsed"]:
+        print("(sound fit skipped: run `enrich audio` first so your own songs are measured)")
+    print(f"\n{result['artist']}: best {len(result['picks'])} for you\n")
+    for i, p in enumerate(result["picks"], 1):
+        mark = "in library" if p["libraryID"] else "add in Music"
+        print(f"{i:>3}. {p['name']}  [{mark}]  ({artist.why(p)})")
+        if not p["libraryID"]:
+            print(f"       {p['url']}")
+    ops, waiting = artist.plan_ops(lib, result, args.playlist_name)
+    plan = plans.new_plan(f"Artist playlist: {result['artist']}", ops, lib)
+    plan["waiting"] = waiting
+    plans.save_plan(plan)
+    print(f"\nPlan {plan['id']}: creates the playlist with the {len(result['picks']) - len(waiting)} songs you have.")
+    if waiting:
+        print(f"Add the other {len(waiting)} in Music (+), then run `scan` and `fill` to put them in the playlist.")
+
+
+def cmd_fill(args):
+    lib = load_inventory()
+    made = 0
+    for plan in plans.all_plans():
+        ops, still = artist.fill_ops(lib, plan)
+        if ops:
+            fill = plans.new_plan(f"Fill {plan['title']}", ops, lib)
+            plans.save_plan(fill)
+            plan["waiting"] = still
+            plans.save_plan(plan)
+            made += 1
+            print(f"{fill['id']}: {len(ops[0]['tracks'])} songs ready to add ({len(still)} still not in library)")
+    if not made:
+        print("Nothing new to fill. (Add songs in Music, then run `scan` first.)")
 
 
 def cmd_split(args):
@@ -282,6 +322,7 @@ def cmd_enrich(args):
 MENU_ACTIONS = [  # (menu title, ui action, needs a selection)
     ("Organizer – Where Do These Belong", "belong", True),
     ("Organizer – Discover From Selection", "discover", True),
+    ("Organizer – Artist Playlist…", "artist", False),
     ("Organizer – Review & Apply Changes", "review", False),
     ("Organizer – Refresh Scan & Metadata", "refresh", False),
 ]
@@ -335,6 +376,15 @@ def main():
     r.add_argument("--limit", type=int, default=25)
     r.set_defaults(fn=cmd_report)
 
+    ar = sub.add_parser("artist", help="plan a playlist of an artist's best songs for your taste")
+    ar.add_argument("name")
+    ar.add_argument("--size", type=int, default=20)
+    ar.add_argument("--country", default="in", help="Apple Music storefront")
+    ar.add_argument("--playlist-name", help='default: "<Artist> · For You"')
+    ar.set_defaults(fn=cmd_artist)
+
+    sub.add_parser("fill", help="add newly added songs to artist playlists").set_defaults(fn=cmd_fill)
+
     sp = sub.add_parser("split", help="plan vibe-based splits of big playlists")
     sp.add_argument("playlists", nargs="+", metavar="PLAYLIST")
     sp.add_argument("--min-size", type=int, default=10, help="merge smaller groups into their nearest neighbour")
@@ -387,7 +437,7 @@ def main():
     ap_.add_argument("--confirm", metavar="PLAN_ID", help="non-interactive confirmation; must equal the plan id")
     ap_.set_defaults(fn=cmd_apply)
     u = sub.add_parser("ui", help="dialog flows used by the Music Scripts menu")
-    u.add_argument("action", choices=["review", "belong", "discover", "refresh"])
+    u.add_argument("action", choices=["review", "belong", "discover", "refresh", "artist"])
     u.add_argument("ids", nargs="*", metavar="TRACK_ID")
     u.set_defaults(fn=cmd_ui)
 
