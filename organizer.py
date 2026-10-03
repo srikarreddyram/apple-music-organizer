@@ -8,6 +8,7 @@ Usage:
   python3 organizer.py fill                  Add songs you've since added to the library to artist playlists
   python3 organizer.py split PLAYLIST...     Plan splitting big mixed playlists into vibe playlists
   python3 organizer.py check-labels          Compare energy labels with the measured audio
+  python3 organizer.py evaluate              Benchmark playlist fit against your own playlists
   python3 organizer.py label TRACK ...       Override a track's mood/energy/context/language/style
   python3 organizer.py suggest [NAME...]     Write suggested change plans (artist-gaps, genre-homes)
   python3 organizer.py draft ...             Write a hand-made change plan
@@ -215,6 +216,11 @@ def cmd_check_labels(args):
         print(f"  {t['persistentID']}  {t['name'][:38]:38} {t['artist'][:24]:24} label {lab['energy']}  sounds {pred:.1f}")
     if flagged:
         print("\nFix with: python3 organizer.py label TRACK_ID --energy N")
+
+
+def cmd_evaluate(args):
+    import evaluate
+    evaluate.report(evaluate.run(load_inventory()))
 
 
 def cmd_label(args):
@@ -441,6 +447,8 @@ def main():
     cl = sub.add_parser("check-labels", help="compare energy labels with measured audio")
     cl.add_argument("--threshold", type=float, default=1.25)
     cl.set_defaults(fn=cmd_check_labels)
+
+    sub.add_parser("evaluate", help="benchmark playlist fit against your own playlists").set_defaults(fn=cmd_evaluate)
 
     lb = sub.add_parser("label", help="override labels for one track (shows them if no options)")
     lb.add_argument("track", metavar="TRACK_ID")

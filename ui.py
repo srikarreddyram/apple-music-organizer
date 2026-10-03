@@ -19,6 +19,7 @@ import discover
 import labels
 import metadata
 import names
+import similarity
 import plans
 import suggest
 
@@ -287,14 +288,29 @@ def belong(ids):
         return
     z = sound_vectors(lib)
     profs = profiles(lib, eff, z)
+    model = similarity.SimilarityModel(lib, eff, z)
     rows = []
     for tid in ids:
         t = tracks[tid]
-        scored = sorted(((*fit(t, eff.get(tid), pr, z.get(tid)), pr) for pr in profs.values()
-                         if tid not in pr["ids"]),
-                        key=lambda x: -x[0])
-        for score, why, pr in scored[:3]:
-            if score >= 0.35:
+        scored = []
+        for pr in profs.values():
+            if tid in pr["ids"]:
+                continue
+            members = [i for i in pr["ids"] if i in tracks]
+            if tid in model.index:
+                score, why = similarity.score_playlist(model, t, tid, pr, members, album_words)
+                if not why and score > 0:
+                    near = model.neighbours(tid, members)
+                    why = "close to " + ", ".join(tracks[m]["name"] for m in near)
+                bar = (similarity.SHOW_BEST_AT, similarity.SHOW_AT)
+            else:  # not labelled yet: fall back to the genre-based fit
+                score, why = fit(t, None, pr)
+                bar = (0.35, 0.35)
+            scored.append((score, why, pr, bar))
+        scored.sort(key=lambda x: -x[0])
+        # The best match needs less to be shown than the runners-up.
+        for rank, (score, why, pr, bar) in enumerate(scored[:3]):
+            if score >= bar[0 if rank == 0 else 1]:
                 rows.append((tid, pr["playlist"], score, why))
     if not rows:
         alert("No playlist is a clear fit for these songs.")

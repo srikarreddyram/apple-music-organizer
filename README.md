@@ -47,8 +47,19 @@ python3 organizer.py discover [--fresh]   # charting now (or new releases) near 
 python3 organizer.py plans | review PLAN | approve PLAN 1,3-5 | drop PLAN OP 2,7 | apply PLAN
 python3 organizer.py label TRACK_ID --energy 2 --mood chill   # your overrides always win
 python3 organizer.py check-labels         # compare energy labels with measured audio
+python3 organizer.py evaluate             # benchmark playlist fit on your own playlists
 python3 -m unittest discover tests        # tests against a fake Music app
 ```
+
+## How "Where do these belong?" decides
+
+Each song is compared with the songs in every playlist (language, style, mood,
+energy, measured sound, shared artists); a playlist scores by its 5 closest songs.
+Artist playlists only take that artist; soundtrack-style playlists only take songs
+from matching albums. On a leave-one-out test over the author's library (hide a song
+from its playlist, see where the model puts it) the right playlist came first 86.8%
+of the time, against 70.7% for comparing with a playlist's average and 40.6% for
+always picking the biggest playlist. Run `evaluate` to measure it on yours.
 
 ## Safety
 

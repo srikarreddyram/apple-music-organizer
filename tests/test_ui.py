@@ -213,3 +213,25 @@ class MisfitTests(SandboxTest):
         where = self.placed(ops)
         self.assertEqual({where[t["persistentID"]] for t in FOLK}, {"Rap + 5 folk-roots"})
         self.assertEqual(left, [])
+
+
+class CrossLanguageArtistTests(SandboxTest):
+    tracks = [track("H1", "Kun Faya Kun", "A.R. Rahman", "Bollywood"), track("H2", "Khulke Jeene Ka", "A.R. Rahman", "Bollywood"),
+              track("H3", "Tum Hi Ho", "Arijit Singh", "Bollywood"),
+              track("T1", "Kannukulla", "Sai Abhyankkar", "Tamil"), track("T2", "Oru Maalai", "Karthik", "Tamil"),
+              track("T3", "Ennamo Yeadho", "Harris Jayaraj", "Tamil"),
+              track("NEW", "Neethanae", "A.R. Rahman & Shreya Ghoshal", "Tamil")]
+    playlists = [
+        {"persistentID": "HIN", "name": "Hindi Tunes", "smart": False, "specialKind": "none", "trackIDs": ["H1", "H2", "H3"]},
+        {"persistentID": "TAM", "name": "South", "smart": False, "specialKind": "none", "trackIDs": ["T1", "T2", "T3"]},
+    ]
+
+    def test_language_beats_a_shared_artist(self):
+        mel = lambda lang: ("romantic", 2, ["wind-down"], lang, "film-melody")
+        self.set_labels({"H1": mel("hindi"), "H2": mel("hindi"), "H3": mel("hindi"), "T1": mel("tamil"),
+                         "T2": mel("tamil"), "T3": mel("tamil"), "NEW": mel("tamil")})
+        self.dialogs.choices = [[0]]  # take the first suggestion
+        ui.belong(["NEW"])
+        first = self.dialogs.shown[0][2][0]
+        self.assertIn("South", first)
+        self.assertIn("NEW", self.music.playlists["TAM"]["trackIDs"])
