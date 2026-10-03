@@ -31,6 +31,18 @@ STYLES = [
     "film-melody", "film-dance", "film-bgm", "indian-indie", "punjabi-pop", "sufi", "devotional",
     "other",
 ]
+FAMILIES = {
+    "rap": ["trap", "melodic-rap", "drill", "rage", "boom-bap", "conscious-rap", "pop-rap", "west-coast", "uk-rap"],
+    "rnb": ["rnb", "alt-rnb"],
+    "pop": ["dance-pop", "synth-pop", "teen-pop", "acoustic-pop", "pop-ballad", "indie-pop"],
+    "rock": ["indie-rock", "alt-rock", "dream-pop", "pop-rock", "hard-rock"],
+    "electronic": ["edm", "house", "uk-garage", "electronic", "phonk"],
+    "latin": ["reggaeton", "latin-pop", "latin-trap"],
+    "indian-film": ["film-melody", "film-dance", "film-bgm"],
+    "indian-other": ["indian-indie", "punjabi-pop", "sufi", "devotional"],
+    "other": ["other"],
+}
+FAMILY = {style: fam for fam, styles in FAMILIES.items() for style in styles}
 FIELDS = ("mood", "energy", "contexts", "language", "style", "confidence")
 
 

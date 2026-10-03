@@ -200,6 +200,13 @@ def profiles(lib, eff, z=None):
     return out
 
 
+def style_share(style, prof):
+    """Share of the playlist in this style; related styles (same family) count half."""
+    same = prof["style"].get(style, 0)
+    family = sum(c for s, c in prof["style"].items() if labels.FAMILY.get(s) == labels.FAMILY.get(style))
+    return (same + 0.5 * (family - same)) / prof["n"]
+
+
 def fit(track, label, prof, z=None):
     """0..1 fit of a track for a playlist, with a short reason. `z`: the track's sound vector."""
     if prof["artist"]:  # artist playlists only take that artist's songs
@@ -213,7 +220,7 @@ def fit(track, label, prof, z=None):
         return 0.6 * share, f"{share:.0%} {track['genre']}"
     n = prof["n"]
     lang = prof["language"].get(label["language"], 0) / n
-    style = prof["style"].get(label["style"], 0) / n
+    style = style_share(label["style"], prof)
     mood = prof["mood"].get(label["mood"], 0) / n
     energy = 1 - abs(label["energy"] - prof["energy"]) / 4
     sound = None
@@ -228,7 +235,7 @@ def fit(track, label, prof, z=None):
         score = lang * (0.6 + 0.4 * (0.5 * style + 0.2 * mood + 0.3 * feel))
     else:
         # Mixed playlists: style relative to the playlist's main style gates, mood and sound refine.
-        style_rel = style / (prof["style"].most_common(1)[0][1] / n)
+        style_rel = style / style_share(prof["style"].most_common(1)[0][0], prof)
         mood_rel = mood / (prof["mood"].most_common(1)[0][1] / n)
         score = lang * style_rel ** 0.5 * (0.45 + 0.2 * mood_rel + 0.35 * feel)
     why = f"{lang:.0%} {label['language']}, {style:.0%} {label['style']}"
