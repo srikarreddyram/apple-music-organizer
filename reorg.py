@@ -9,6 +9,7 @@ from collections import OrderedDict
 
 import labels
 from plans import track_ref
+from suggest import song_key
 
 FEELS = {"romantic", "heartbreak", "melancholic", "introspective", "nostalgic"}
 BUCKETS = ["Gym", "Party", "Cruise", "Feels", "Late Night"]
@@ -50,8 +51,13 @@ def split_ops(lib, playlist, min_size=10, name_format="{source} · {bucket}"):
     tracks = {t["persistentID"]: t for t in lib["tracks"]}
     eff = labels.merged()
     groups = OrderedDict((b, []) for b in BUCKETS)
-    unlabelled = []
+    unlabelled, seen = [], set()
     for pid in dict.fromkeys(playlist["trackIDs"]):  # keep order, drop repeated entries
+        if pid in tracks:
+            key = song_key(tracks[pid])
+            if key in seen:
+                continue  # another edition of a song already placed
+            seen.add(key)
         if pid in eff:
             groups[bucket(eff[pid])].append(pid)
         elif pid in tracks:
@@ -64,7 +70,9 @@ def split_ops(lib, playlist, min_size=10, name_format="{source} · {bucket}"):
             if target:
                 groups[target] += groups[b]
                 groups[b] = []
-    order = {pid: i for i, pid in enumerate(playlist["trackIDs"])}
+    order = {}
+    for i, pid in enumerate(playlist["trackIDs"]):
+        order.setdefault(pid, i)  # first position counts when a song is listed twice
 
     source = playlist["name"].strip()
     ops = []

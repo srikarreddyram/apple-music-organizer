@@ -138,8 +138,8 @@ def analyze(x):
 
     # Onset strength: positive spectral flux on a log-magnitude spectrum.
     logmag = np.log1p(100 * mag)
-    flux = np.maximum(0, np.diff(logmag, axis=0)).sum(axis=1)
-    flux = (flux - flux.mean()) / (flux.std() + 1e-9)
+    raw_flux = np.maximum(0, np.diff(logmag, axis=0)).sum(axis=1)
+    flux = (raw_flux - raw_flux.mean()) / (raw_flux.std() + 1e-9)
 
     # Tempo: autocorrelation of onset strength, 60-200 BPM, gently preferring ~120.
     ac = np.correlate(flux, flux, mode="full")[len(flux) - 1:]
@@ -166,12 +166,15 @@ def analyze(x):
         "bassShare": round(float((power[:, freqs < 150].sum(axis=1) / total)[loud].mean()), 3),
         "onsetRate": round(float(onset_peaks.sum() / (len(x) / SR)), 2),  # distinct hits per second
         "noisiness": round(float(np.median(flatness[loud])), 3),
+        "highShare": round(float((power[:, freqs > 4000].sum(axis=1) / total)[loud].mean()), 4),  # hats, distortion
+        "fluxMean": round(float(np.log1p(raw_flux[loud[1:]].mean())), 3),  # how hard and often the sound changes
     }
 
 
-def enrich_audio(lib, progress=print, save_every=10):
+def enrich_audio(lib, progress=print, save_every=10, reanalyze=False):
+    """Analyse previews; with reanalyze, re-measure every track (previews are cached, so no downloads)."""
     apple, data = load("apple"), load("audio")
-    todo = [t for t in lib["tracks"] if t["persistentID"] not in data
+    todo = [t for t in lib["tracks"] if (reanalyze or t["persistentID"] not in data)
             and apple.get(t["persistentID"], {}).get("previewUrl")]
     for i, t in enumerate(todo, 1):
         a = apple[t["persistentID"]]

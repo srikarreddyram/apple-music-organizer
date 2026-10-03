@@ -8,6 +8,7 @@ Nothing changes in Music unless you tick items and confirm in a dialog; every
 change goes through the same plan, verification, audit log and undo as the CLI.
 """
 import json
+import math
 import subprocess
 import sys
 from collections import Counter
@@ -161,8 +162,23 @@ def theme_word(ids, tracks):
     return None
 
 
-def profiles(lib, eff):
+def sound_vectors(lib):
+    """Standardised audio vectors per track id (empty until `enrich audio` has run)."""
+    import numpy as np
+    from artist import vector
+    audio = metadata.load("audio")
+    vecs = {t["persistentID"]: vector(audio.get(t["persistentID"], {})) for t in lib["tracks"]}
+    vecs = {k: v for k, v in vecs.items() if v}
+    if len(vecs) < 50:
+        return {}
+    x = np.array(list(vecs.values()), dtype=float)
+    mean, std = x.mean(axis=0), x.std(axis=0) + 1e-9
+    return {k: (np.array(v) - mean) / std for k, v in vecs.items()}
+
+
+def profiles(lib, eff, z=None):
     tracks = {t["persistentID"]: t for t in lib["tracks"]}
+    z = z or {}
     display = {suggest.norm(n) for t in tracks.values() for n in suggest.credit_names(t)}
     out = {}
     for p in filter(suggest.editable, lib["playlists"]):
@@ -178,12 +194,14 @@ def profiles(lib, eff):
             "language": Counter(l["language"] for l in labs),
             "genre": Counter(tracks[i]["genre"] for i in ids if i in tracks),
             "energy": sum(l["energy"] for l in labs) / n, "n": n, "size": len(ids),
+            "sound": sum(z[i] for i in ids if i in z) / sum(1 for i in ids if i in z)
+            if sum(1 for i in ids if i in z) >= 3 else None,
         }
     return out
 
 
-def fit(track, label, prof):
-    """0..1 fit of a track for a playlist, with a short reason."""
+def fit(track, label, prof, z=None):
+    """0..1 fit of a track for a playlist, with a short reason. `z`: the track's sound vector."""
     if prof["artist"]:  # artist playlists only take that artist's songs
         if prof["artist"] in suggest.credited(track):
             return 1.0, f"artist playlist for {prof['artist'].title()}"
@@ -198,16 +216,24 @@ def fit(track, label, prof):
     style = prof["style"].get(label["style"], 0) / n
     mood = prof["mood"].get(label["mood"], 0) / n
     energy = 1 - abs(label["energy"] - prof["energy"]) / 4
+    sound = None
+    if z is not None and prof.get("sound") is not None:
+        d2 = float(((z - prof["sound"]) ** 2).mean())  # ~1 for an average distance
+        sound = math.exp(-d2)
+    # Measured sound, when there is one, shares the weight with the energy label.
+    feel = energy if sound is None else 0.4 * energy + 0.6 * sound
     main_lang, main_n = prof["language"].most_common(1)[0]
     if main_lang != "english" and main_n / n >= 0.7:
         # A language playlist (Telugu Tunes, South...): language decides, vibe fine-tunes.
-        score = lang * (0.6 + 0.4 * (0.5 * style + 0.25 * mood + 0.25 * energy))
+        score = lang * (0.6 + 0.4 * (0.5 * style + 0.2 * mood + 0.3 * feel))
     else:
-        # Mixed playlists: style relative to the playlist's main style gates, mood and energy refine.
+        # Mixed playlists: style relative to the playlist's main style gates, mood and sound refine.
         style_rel = style / (prof["style"].most_common(1)[0][1] / n)
         mood_rel = mood / (prof["mood"].most_common(1)[0][1] / n)
-        score = lang * style_rel ** 0.5 * (0.5 + 0.25 * mood_rel + 0.25 * energy)
-    return score, f"{lang:.0%} {label['language']}, {style:.0%} {label['style']}, energy ~{prof['energy']:.1f}"
+        score = lang * style_rel ** 0.5 * (0.45 + 0.2 * mood_rel + 0.35 * feel)
+    why = f"{lang:.0%} {label['language']}, {style:.0%} {label['style']}"
+    why += f", sounds {sound:.0%} alike" if sound is not None else f", energy ~{prof['energy']:.1f}"
+    return score, why
 
 
 def belong(ids):
@@ -221,11 +247,13 @@ def belong(ids):
         ids = [i for i in ids if i in tracks]
     if not ids:
         return
-    profs = profiles(lib, eff)
+    z = sound_vectors(lib)
+    profs = profiles(lib, eff, z)
     rows = []
     for tid in ids:
         t = tracks[tid]
-        scored = sorted(((*fit(t, eff.get(tid), pr), pr) for pr in profs.values() if tid not in pr["ids"]),
+        scored = sorted(((*fit(t, eff.get(tid), pr, z.get(tid)), pr) for pr in profs.values()
+                         if tid not in pr["ids"]),
                         key=lambda x: -x[0])
         for score, why, pr in scored[:3]:
             if score >= 0.35:

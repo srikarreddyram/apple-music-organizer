@@ -25,7 +25,7 @@ from plans import track_ref
 from suggest import credited, norm, song_key
 
 FEATURES = ["loudnessDb", "dynamicsDb", "brightnessHz", "bassShare", "beatStrength", "onsetRate", "noisiness",
-            "tempo"]
+            "tempo", "highShare", "fluxMean"]
 
 
 def fold_tempo(t):
@@ -38,6 +38,9 @@ def fold_tempo(t):
 
 
 def vector(f):
+    """Feature vector for comparisons, or None for an analysis from an older version."""
+    if any(k not in f for k in FEATURES):
+        return None
     v = [f[k] for k in FEATURES]
     v[FEATURES.index("brightnessHz")] = math.log(max(v[FEATURES.index("brightnessHz")], 1))
     v[FEATURES.index("tempo")] = fold_tempo(v[FEATURES.index("tempo")])
@@ -50,7 +53,7 @@ class SoundTaste:
     def __init__(self, lib, now):
         audio = metadata.load("audio")
         rows = [(t, audio[t["persistentID"]]) for t in lib["tracks"]
-                if "error" not in audio.get(t["persistentID"], {"error": 1}) and not t["disliked"]]
+                if vector(audio.get(t["persistentID"], {})) and not t["disliked"]]
         self.ready = len(rows) >= 50
         if not self.ready:
             return
@@ -61,7 +64,10 @@ class SoundTaste:
 
     def fit(self, features, k=12):
         """0..1: how close a song sounds to the songs you play most."""
-        v = (np.array(vector(features)) - self.mean) / self.std
+        vec = vector(features)
+        if vec is None:
+            return None
+        v = (np.array(vec) - self.mean) / self.std
         d = np.sqrt(((self.x - v) ** 2).sum(axis=1))
         near = np.argsort(d)[:k]
         return float((self.w[near] * np.exp(-d[near] ** 2 / 8)).sum() / self.w[near].sum())
@@ -139,7 +145,7 @@ def best_songs(lib, name, country="in", size=20, analyse=40, progress=print):
             "url": apple.get(t["persistentID"], {}).get("url", ""), "trackId": apple.get(t["persistentID"], {}).get("trackId"),
             "popularity": 1 - rank / len(songs) if rank is not None else 0.5, "libraryID": t["persistentID"],
             "genreFit": taste["genres"].get(t["genre"], 0) / max(taste["genres"].values() or [1]),
-            "soundFit": sound.fit(f) if sound.ready and f and "error" not in f else None,
+            "soundFit": sound.fit(f) if sound.ready and f else None,
             "played": t["playedCount"] or 0,
         })
 

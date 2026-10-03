@@ -7,6 +7,7 @@ Usage:
   python3 organizer.py artist "NAME"         Plan a playlist of that artist's best songs for your taste
   python3 organizer.py fill                  Add songs you've since added to the library to artist playlists
   python3 organizer.py split PLAYLIST...     Plan splitting big mixed playlists into vibe playlists
+  python3 organizer.py check-labels          Compare energy labels with the measured audio
   python3 organizer.py label TRACK ...       Override a track's mood/energy/context/language/style
   python3 organizer.py suggest [NAME...]     Write suggested change plans (artist-gaps, genre-homes)
   python3 organizer.py draft ...             Write a hand-made change plan
@@ -193,6 +194,20 @@ def cmd_split(args):
     print(f"\nSaved {plan['id']}. See every track with: python3 organizer.py review {plan['id']}")
 
 
+def cmd_check_labels(args):
+    import calibrate
+    report, weights, flagged = calibrate.check(load_inventory(), threshold=args.threshold)
+    print(f"Energy from sound alone, 5-fold cross-validated on {report['trained_on']} trusted labels:")
+    print(f"  mean error {report['cv_mae']:.2f} levels (guessing the average: {report['baseline_mae']:.2f}), "
+          f"{report['within_1']:.0%} within one level, correlation {report['cv_corr']:.2f}")
+    print("  weights: " + ", ".join(f"{k} {v:+.2f}" for k, v in weights.items()))
+    print(f"\n{len(flagged)} low-confidence labels the audio disagrees with by {args.threshold}+ levels:")
+    for t, lab, pred in flagged:
+        print(f"  {t['persistentID']}  {t['name'][:38]:38} {t['artist'][:24]:24} label {lab['energy']}  sounds {pred:.1f}")
+    if flagged:
+        print("\nFix with: python3 organizer.py label TRACK_ID --energy N")
+
+
 def cmd_label(args):
     lib = load_inventory()
     tracks = {t["persistentID"]: t for t in lib["tracks"]}
@@ -310,7 +325,7 @@ def cmd_enrich(args):
         hits = sum(1 for v in data.values() if not v.get("miss"))
         print(f"apple: {hits} of {len(data)} tracks matched in the catalog")
     if "audio" in sources:
-        data = metadata.enrich_audio(lib, progress=progress)
+        data = metadata.enrich_audio(lib, progress=progress, reanalyze=args.reanalyze)
         ok = sum(1 for v in data.values() if "error" not in v)
         print(f"audio: {ok} of {len(data)} previews analysed")
     if "musicbrainz" in sources:
@@ -391,6 +406,10 @@ def main():
     sp.add_argument("--verbose", action="store_true", help="list every track")
     sp.set_defaults(fn=cmd_split)
 
+    cl = sub.add_parser("check-labels", help="compare energy labels with measured audio")
+    cl.add_argument("--threshold", type=float, default=1.25)
+    cl.set_defaults(fn=cmd_check_labels)
+
     lb = sub.add_parser("label", help="override labels for one track (shows them if no options)")
     lb.add_argument("track", metavar="TRACK_ID")
     lb.add_argument("--mood", choices=labels.MOODS)
@@ -446,6 +465,7 @@ def main():
     en = sub.add_parser("enrich", help="add metadata from Apple's catalog and preview audio (uses the internet)")
     en.add_argument("sources", nargs="*", choices=["apple", "audio", "musicbrainz"], metavar="SOURCE")
     en.add_argument("--country", default="in", help="Apple storefront for catalog matching")
+    en.add_argument("--reanalyze", action="store_true", help="re-measure all previews (after analysis changes)")
     en.set_defaults(fn=cmd_enrich)
 
     dc = sub.add_parser("discover", help="songs near your taste from lesser-known artists (uses the internet)")
