@@ -11,6 +11,8 @@ Usage:
   python3 organizer.py approve PLAN 1,3-5    Approve ops (or "all"); `reject` undoes approval
   python3 organizer.py drop PLAN OP 2,7      Remove tracks from an op before approving it
   python3 organizer.py apply PLAN            Apply approved ops to Music, verify, log, write undo plan
+  python3 organizer.py enrich [SOURCE...]    Add metadata: apple, audio, musicbrainz (default: all)
+  python3 organizer.py discover [--fresh]    Charting songs (or new releases) from lesser-known artists near your taste
 
 Nothing changes in Music except through `apply`, which only runs approved ops
 and asks for its own confirmation.
@@ -23,6 +25,8 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+import discover
+import metadata
 import music_bridge
 import plans
 import suggest
@@ -212,6 +216,39 @@ def cmd_apply(args):
     cmd_scan(args)
 
 
+def cmd_enrich(args):
+    lib = load_inventory()
+    progress = lambda msg: print(f"  {msg}", file=sys.stderr, flush=True)
+    sources = args.sources or ["apple", "audio", "musicbrainz"]
+    if "apple" in sources:
+        data = metadata.enrich_apple(lib, country=args.country, progress=progress)
+        hits = sum(1 for v in data.values() if not v.get("miss"))
+        print(f"apple: {hits} of {len(data)} tracks matched in the catalog")
+    if "audio" in sources:
+        data = metadata.enrich_audio(lib, progress=progress)
+        ok = sum(1 for v in data.values() if "error" not in v)
+        print(f"audio: {ok} of {len(data)} previews analysed")
+    if "musicbrainz" in sources:
+        data = metadata.enrich_musicbrainz(lib, progress=progress)
+        hits = sum(1 for v in data.values() if not v.get("miss"))
+        print(f"musicbrainz: {hits} of {len(data)} artists found")
+
+
+def cmd_discover(args):
+    lib = load_inventory()
+    progress = lambda msg: print(f"  {msg}", file=sys.stderr)
+    if args.fresh:
+        result = discover.fresh(lib, country=args.country.split(",")[0], days=args.days, seeds=args.seeds,
+                                max_ratio=args.max_ratio, limit=args.limit, progress=progress)
+    else:
+        result = discover.trending(lib, countries=tuple(args.country.split(",")), genres=args.genres,
+                                   seeds=args.seeds, max_ratio=args.max_ratio, limit=args.limit,
+                                   progress=progress)
+    path = discover.save(result)
+    discover.print_result(result)
+    print(f"\nSaved to {path}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -256,6 +293,22 @@ def main():
     ap_.add_argument("plan")
     ap_.add_argument("--confirm", metavar="PLAN_ID", help="non-interactive confirmation; must equal the plan id")
     ap_.set_defaults(fn=cmd_apply)
+    en = sub.add_parser("enrich", help="add metadata from Apple's catalog and preview audio (uses the internet)")
+    en.add_argument("sources", nargs="*", choices=["apple", "audio", "musicbrainz"], metavar="SOURCE")
+    en.add_argument("--country", default="in", help="Apple storefront for catalog matching")
+    en.set_defaults(fn=cmd_enrich)
+
+    dc = sub.add_parser("discover", help="songs near your taste from lesser-known artists (uses the internet)")
+    dc.add_argument("--fresh", action="store_true", help="recent releases instead of what's charting now")
+    dc.add_argument("--country", default="in,us", help="Apple storefronts, comma separated (default: in,us)")
+    dc.add_argument("--genres", type=int, default=8, help="how many of your top genres to pull charts for")
+    dc.add_argument("--days", type=int, default=90, help="--fresh: how recent a release must be")
+    dc.add_argument("--max-ratio", type=float, default=2.0,
+                    help="skip artists with more than this many times the fans of your usual artists")
+    dc.add_argument("--seeds", type=int, default=30, help="how many of your top artists to start from")
+    dc.add_argument("--limit", type=int, default=30)
+    dc.set_defaults(fn=cmd_discover)
+
     args = ap.parse_args()
     args.fn(args)
 
