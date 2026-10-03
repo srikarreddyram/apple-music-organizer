@@ -194,20 +194,6 @@ def theme_word(ids, tracks):
     return None
 
 
-def sound_vectors(lib):
-    """Standardised audio vectors per track id (empty until `enrich audio` has run)."""
-    import numpy as np
-    from artist import vector
-    audio = metadata.load("audio")
-    vecs = {t["persistentID"]: vector(audio.get(t["persistentID"], {})) for t in lib["tracks"]}
-    vecs = {k: v for k, v in vecs.items() if v}
-    if len(vecs) < 50:
-        return {}
-    x = np.array(list(vecs.values()), dtype=float)
-    mean, std = x.mean(axis=0), x.std(axis=0) + 1e-9
-    return {k: (np.array(v) - mean) / std for k, v in vecs.items()}
-
-
 def profiles(lib, eff, z=None):
     tracks = {t["persistentID"]: t for t in lib["tracks"]}
     z = z or {}
@@ -286,7 +272,7 @@ def belong(ids):
         ids = [i for i in ids if i in tracks]
     if not ids:
         return
-    z = sound_vectors(lib)
+    z = similarity.sound_vectors(lib)
     profs = profiles(lib, eff, z)
     model = similarity.SimilarityModel(lib, eff, z)
     rows = []

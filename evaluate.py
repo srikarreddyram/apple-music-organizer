@@ -14,6 +14,7 @@ from collections import Counter, defaultdict
 import numpy as np
 
 import labels
+import similarity
 import suggest
 import ui
 
@@ -25,7 +26,7 @@ class Context:
         self.lib = lib
         self.tracks = {t["persistentID"]: t for t in lib["tracks"]}
         self.eff = labels.merged()
-        self.z = ui.sound_vectors(lib)
+        self.z = similarity.sound_vectors(lib)
         self.profiles = ui.profiles(lib, self.eff, self.z)
         self.members = {pid: [i for i in pr["ids"] if i in self.tracks] for pid, pr in self.profiles.items()}
 
@@ -166,3 +167,42 @@ def report(results):
     print(f"\nmost common mix-ups for {best!r} (true playlist -> picked instead):")
     for (a, b), n in results[best]["confusion"]:
         print(f"  {n:3}  {a} -> {b}")
+
+
+# --- Split cohesion ------------------------------------------------------------------
+
+def split_cohesion(lib, plan, samples=30, seed=0):
+    """How much more alike each new playlist's songs *sound* than a random group of the same
+    size from the same source (x1.0 = no better than random).
+
+    Splits are formed from labels, so this uses measured preview audio only: an independent
+    check rather than the model grading itself. (Clustering on the full similarity looks
+    better on a similarity-based score but no better on this one.)
+    """
+    z = similarity.sound_vectors(lib)
+    rng = np.random.default_rng(seed)
+
+    def cohesion(ids):
+        x = np.array([z[i] for i in ids if i in z])
+        if len(x) < 2:
+            return float("nan")
+        d2 = ((x[:, None, :] - x[None, :, :]) ** 2).mean(axis=2)
+        return float(np.exp(-d2)[~np.eye(len(x), dtype=bool)].mean())
+
+    groups = {}
+    for op in plan["ops"]:
+        if op["op"] == "add_tracks" and op["playlist"].get("ref"):
+            source = op["reason"].split("from ")[-1].split(";")[0].strip("'")
+            groups.setdefault(source, []).append((op["playlist"]["name"], [t["id"] for t in op["tracks"]]))
+    out = {}
+    for source, gs in groups.items():
+        pool = [i for _, ids in gs for i in ids if i in z]
+        rows = []
+        for name, ids in gs:
+            n = sum(1 for i in ids if i in z)
+            if n < 2:
+                continue
+            rand = np.mean([cohesion(list(rng.choice(pool, n, replace=False))) for _ in range(samples)])
+            rows.append((name, n, cohesion(ids) / rand))
+        out[source] = {"groups": rows, "weighted": sum(n * r for _, n, r in rows) / max(sum(n for _, n, _ in rows), 1)}
+    return out

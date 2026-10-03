@@ -33,6 +33,21 @@ SHOW_AT = 0.5   # on the benchmark, top picks scoring 0.5+ were right 91% of the
 SHOW_BEST_AT = 0.15  # the single best match is shown with less (top picks are right 87% overall)
 
 
+def sound_vectors(lib):
+    """Standardised audio vectors per track id (empty until `enrich audio` has run)."""
+    import metadata
+    from artist import vector
+    audio = metadata.load("audio")
+    vecs = {t["persistentID"]: vector(audio.get(t["persistentID"], {})) for t in lib["tracks"]}
+    vecs = {k: v for k, v in vecs.items() if v}
+    if len(vecs) < 50:
+        return {}
+    x = np.array(list(vecs.values()), dtype=float)
+    mean, std = x.mean(axis=0), x.std(axis=0) + 1e-9
+    return {k: (np.array(v) - mean) / std for k, v in vecs.items()}
+
+
+
 class SimilarityModel:
     def __init__(self, lib, eff, z, weights=None):
         self.w = dict(WEIGHTS, **(weights or {}))

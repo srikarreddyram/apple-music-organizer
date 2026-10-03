@@ -220,7 +220,17 @@ def cmd_check_labels(args):
 
 def cmd_evaluate(args):
     import evaluate
-    evaluate.report(evaluate.run(load_inventory()))
+    lib = load_inventory()
+    evaluate.report(evaluate.run(lib))
+    splits = [p for p in plans.all_plans() if p["title"].startswith("Split ")]
+    if splits:
+        plan = splits[-1]
+        print(f"\nSplit cohesion, measured sound only ({plan['id']}):")
+        print("  x1.0 = no more alike than a random group of the same size from the same playlist")
+        for source, r in evaluate.split_cohesion(lib, plan).items():
+            print(f"  {source}: x{r['weighted']:.2f}")
+            for name, n, x in r["groups"]:
+                print(f"      {name[:36]:36} {n:3} songs  x{x:.2f}")
 
 
 def cmd_label(args):

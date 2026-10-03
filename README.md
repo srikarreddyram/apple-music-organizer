@@ -61,6 +61,18 @@ from its playlist, see where the model puts it) the right playlist came first 86
 of the time, against 70.7% for comparing with a playlist's average and 40.6% for
 always picking the biggest playlist. Run `evaluate` to measure it on yours.
 
+## How splits decide, and how far to trust them
+
+Splits put each song in a vibe group (Gym, Party, Cruise, Feels, Late Night) from
+its energy, mood and context labels; songs that don't fit the playlist's main sound
+(folk in a pop playlist) get their own group or stay put. `evaluate` checks the
+result against measured preview audio, which the split never looks at: so far groups
+sound only slightly more alike than random groups from the same playlist (about
+x1.1 overall, some groups below x1.0). Data-driven clustering and similarity-based
+refinement were tried and did no better on that independent check, so the simpler,
+explainable rules stay. Treat split plans as a starting point to review, not a
+verdict; `label` overrides and re-running `split` are the main way to improve them.
+
 ## Safety
 
 - Every change is a plan op you approve; `apply` (or the dialog's Apply) asks again.
