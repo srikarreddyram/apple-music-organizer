@@ -427,7 +427,8 @@ def cmd_ui(args):
 def cmd_install_scripts(args):
     """Put one "✨ Organizer" item in Music's Scripts menu that pops open the app's panel."""
     import subprocess
-    src = 'open location "musicorganizer://show"'
+    # `open location` would be handled by Music itself (it opens stream URLs), so go through `open`.
+    src = 'do shell script "open musicorganizer://show"'
     for d in SCRIPT_DIRS:
         d.mkdir(parents=True, exist_ok=True)
         for old in OLD_MENU_SCRIPTS:  # the earlier dialog-based items this tool installed

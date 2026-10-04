@@ -272,7 +272,7 @@ struct RootView: View {
                 }.transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .frame(width: 400, height: 580)
+        .frame(minWidth: 400, maxWidth: 400, minHeight: 420, maxHeight: .infinity)
         .onAppear { Task { await model.loadContext() } }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             if model.screen == .home { Task { await model.loadContext() } }
@@ -975,41 +975,69 @@ struct RefreshView: View {
 
 // MARK: - App ------------------------------------------------------------------------------
 
-/// The floating panel: opened from Music's Scripts menu (musicorganizer://show), or with
-/// `MusicOrganizer --preview`. Same content as the menu bar panel, popping in over Music.
-@MainActor enum FloatingPanel {
-    static var window: NSPanel?
-    static let model = AppModel()
-    static let closer = PanelCloser()
-    static var keyMonitor: Any?
+/// A borderless panel that can take keyboard input without activating the app, so Music
+/// stays the active app while you use it.
+final class OrganizerPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
 
-    /// Done with the organizer: close the panel, which quits the app.
-    static func close() { window?.close() }
+/// The Organizer panel, docked inside Music's window like a sidebar. Opened from Music's
+/// Scripts menu (musicorganizer://show) or with `MusicOrganizer --preview`. It follows the
+/// Music window, hides when you switch to another app and comes back with Music.
+@MainActor enum FloatingPanel {
+    static var window: OrganizerPanel?
+    static let model = AppModel()
+    static var keyMonitor: Any?
+    static var follow: Timer?
+    static let size = NSSize(width: 400, height: 600)
+    static let musicID = "com.apple.Music"
+
+    /// Done with the organizer: quit (the app has no other window, menu bar or Dock icon).
+    static func close() { NSApp.terminate(nil) }
 
     static func show() {
-        if let w = window {
-            model.home()
-            pop(w)
-            return
+        let w = window ?? makeWindow()
+        model.home()
+        place(w, animate: false)
+        w.alphaValue = 0
+        w.orderFrontRegardless()
+        w.makeKey()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.22
+            w.animator().alphaValue = 1
         }
-        let w = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 400, height: 580),
-                        styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
-        w.titlebarAppearsTransparent = true
-        w.titleVisibility = .hidden
-        w.isMovableByWindowBackground = true
+        model.popToken += 1
+    }
+
+    static func makeWindow() -> OrganizerPanel {
+        let w = OrganizerPanel(contentRect: NSRect(origin: .zero, size: size),
+                               styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+                               backing: .buffered, defer: false)
+        w.isOpaque = false
+        w.backgroundColor = .clear
+        w.hasShadow = true
         w.level = .floating
         w.isReleasedWhenClosed = false
         w.hidesOnDeactivate = false
+        w.isMovableByWindowBackground = false
+        w.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
         let effect = NSVisualEffectView()
-        effect.material = .popover
+        effect.material = .hudWindow
+        effect.blendingMode = .behindWindow
         effect.state = .active
+        effect.wantsLayer = true
+        effect.layer?.cornerRadius = 18
+        effect.layer?.masksToBounds = true
+        effect.layer?.borderWidth = 0.5
+        effect.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         let host = NSHostingView(rootView: PoppingRoot().environmentObject(model))
         host.frame = effect.bounds
         host.autoresizingMask = [.width, .height]
         effect.addSubview(host)
         w.contentView = effect
-        w.delegate = closer
         window = w
+
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
             let cmd = e.modifierFlags.contains(.command)
             if e.keyCode == 53 || (cmd && ["q", "w"].contains(e.charactersIgnoringModifiers ?? "")) {
@@ -1018,22 +1046,54 @@ struct RefreshView: View {
             }
             return e
         }
-        pop(w)
+        // Follow the Music window; hide when another app comes forward.
+        follow = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+            Task { @MainActor in if let w = window, w.isVisible { place(w, animate: true) } }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            Task { @MainActor in
+                guard let w = window else { return }
+                if app?.bundleIdentifier == musicID {
+                    place(w, animate: false)
+                    w.orderFrontRegardless()
+                } else if app?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                    w.orderOut(nil)
+                }
+            }
+        }
+        return w
     }
 
-    /// Place the panel near the top right of the screen and fade it in.
-    static func pop(_ w: NSPanel) {
-        if let screen = NSScreen.main?.visibleFrame {
-            w.setFrameTopLeftPoint(NSPoint(x: screen.maxX - 430, y: screen.maxY - 20))
+    /// Music's front window in Cocoa screen coordinates, if Music is running and has one.
+    static func musicFrame() -> NSRect? {
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: musicID).first != nil else { return nil }
+        let src = "tell application \"Music\" to if (count of browser windows) > 0 then get bounds of front browser window"
+        var err: NSDictionary?
+        guard let r = NSAppleScript(source: src)?.executeAndReturnError(&err), r.numberOfItems == 4,
+              let primary = NSScreen.screens.first else { return nil }
+        let v = (1...4).map { r.atIndex($0)?.doubleValue ?? 0 }  // left, top, right, bottom (top-left origin)
+        return NSRect(x: v[0], y: primary.frame.height - v[3], width: v[2] - v[0], height: v[3] - v[1])
+    }
+
+    /// Dock inside the right side of Music's window, just under its toolbar; beside it if it's narrow.
+    static func place(_ w: NSWindow, animate: Bool) {
+        var frame = NSRect(origin: .zero, size: size)
+        if let m = musicFrame() {
+            frame.size.height = min(size.height, max(420, m.height - 76))
+            if m.width >= size.width + 420 {
+                frame.origin = NSPoint(x: m.maxX - size.width - 14, y: m.maxY - 62 - frame.height)
+            } else {
+                frame.origin = NSPoint(x: m.maxX + 8, y: m.maxY - frame.height)
+            }
+        } else if let screen = NSScreen.main?.visibleFrame {
+            frame.origin = NSPoint(x: screen.maxX - size.width - 20, y: screen.maxY - 20 - frame.height)
         }
-        w.alphaValue = 0
-        w.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
-            w.animator().alphaValue = 1
+        if abs(w.frame.origin.x - frame.origin.x) > 0.5 || abs(w.frame.origin.y - frame.origin.y) > 0.5
+            || abs(w.frame.height - frame.height) > 0.5 {
+            w.setFrame(frame, display: true, animate: animate)
         }
-        model.popToken += 1
     }
 }
 
@@ -1051,11 +1111,6 @@ struct PoppingRoot: View {
             }
             .onAppear { withAnimation(.spring(response: 0.42, dampingFraction: 0.72)) { shown = true } }
     }
-}
-
-/// The app has no menu bar or Dock icon, so closing its only window quits it.
-final class PanelCloser: NSObject, NSWindowDelegate {
-    func windowWillClose(_ notification: Notification) { NSApp.terminate(nil) }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

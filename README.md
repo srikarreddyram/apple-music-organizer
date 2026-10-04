@@ -22,7 +22,8 @@ plans, and only touches your library when you approve a plan.
 `python3 organizer.py install-app` builds a small SwiftUI app (the Xcode Command Line
 Tools are enough), installs it in `~/Applications`, and puts **✨ Organizer** in
 Music's Scripts menu (the scroll icon between Window and Help). Choosing it pops the
-Organizer panel over Music. The app has no menu bar or Dock icon; closing the panel
+Organizer panel into the right side of Music's window, like a sidebar: it follows the
+window, hides when you switch apps and comes back with Music. The app has no menu bar or Dock icon; closing the panel
 (red button, ⏻, Esc or ⌘Q) quits it, and the menu item starts it again.
 
 The panel reads what's open in Music and offers what fits: split any playlist by
