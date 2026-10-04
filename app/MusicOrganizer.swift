@@ -124,6 +124,7 @@ enum Screen: Equatable {
     @Published var error: String?
     @Published var pendingCount = 0
     @Published var popToken = 0
+    @Published var panelOpen = false
     @Published var pendingDescribe: String?  // from musicorganizer://describe?q=...
 
     func go(_ s: Screen) {
@@ -373,9 +374,9 @@ struct HomeView: View {
                 Button { Task { await model.loadContext() } } label: {
                     Image(systemName: "arrow.clockwise").frame(width: 28, height: 28).background(Circle().fill(.white.opacity(0.08)))
                 }.buttonStyle(.plain).help("Read Music again")
-                Button { FloatingPanel.close() } label: {
+                Button { FloatingPanel.quit() } label: {
                     Image(systemName: "power").frame(width: 28, height: 28).background(Circle().fill(.white.opacity(0.08)))
-                }.buttonStyle(.plain).help("Quit Organizer (Esc)")
+                }.buttonStyle(.plain).help("Quit Organizer completely (the ✨ button comes back at your next login)")
             }
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 10) {
@@ -386,7 +387,7 @@ struct HomeView: View {
                 }.padding(.vertical, 2)
             }
             Spacer(minLength: 0)
-            Text("Nothing changes in Music until you tick it and press Apply. Every change can be undone. Esc to quit.")
+            Text("Nothing changes in Music until you tick it and press Apply. Every change can be undone. Esc or ✨ to close.")
                 .font(.caption2).foregroundStyle(.tertiary)
         }
         .onAppear { shown = true }
@@ -1110,28 +1111,154 @@ final class OrganizerPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// The Organizer panel, docked inside Music's window like a sidebar. Opened from Music's
-/// Scripts menu (musicorganizer://show) or with `MusicOrganizer --preview`. It follows the
-/// Music window, hides when you switch to another app and comes back with Music.
+/// Watches Music: where its window is and whether it's in front. The ✨ button and the panel
+/// live inside Music's window, follow it, and hide whenever another app is in front.
+@MainActor enum MusicWatcher {
+    static let musicID = "com.apple.Music"
+    static var timer: Timer?
+    static var lastFrame: NSRect?
+
+    static var musicIsFront: Bool { NSWorkspace.shared.frontmostApplication?.bundleIdentifier == musicID }
+
+    static func start() {
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in Task { @MainActor in refresh() } }
+        }
+        refresh()
+    }
+
+    /// Show or hide everything depending on whether Music is in front; follow its window while it is.
+    static func refresh() {
+        if musicIsFront {
+            if timer == nil {
+                timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in Task { @MainActor in follow() } }
+            }
+            follow()
+        } else {
+            timer?.invalidate()
+            timer = nil
+            FloatingButton.window?.orderOut(nil)
+            FloatingPanel.window?.orderOut(nil)
+        }
+    }
+
+    static func follow() {
+        guard let m = musicFrame() else {
+            FloatingButton.window?.orderOut(nil)
+            FloatingPanel.window?.orderOut(nil)
+            return
+        }
+        lastFrame = m
+        FloatingButton.place(in: m)
+        if FloatingPanel.isOpen, let w = FloatingPanel.window {
+            FloatingPanel.place(w, in: m, animate: true)
+            if !w.isVisible { w.orderFrontRegardless() }
+        }
+    }
+
+    /// Music's front window in Cocoa screen coordinates, if Music is running and has one.
+    static func musicFrame() -> NSRect? {
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: musicID).first != nil else { return nil }
+        let src = "tell application \"Music\" to if (count of browser windows) > 0 then get bounds of front browser window"
+        var err: NSDictionary?
+        guard let r = NSAppleScript(source: src)?.executeAndReturnError(&err), r.numberOfItems == 4,
+              let primary = NSScreen.screens.first else { return nil }
+        let v = (1...4).map { r.atIndex($0)?.doubleValue ?? 0 }  // left, top, right, bottom (top-left origin)
+        return NSRect(x: v[0], y: primary.frame.height - v[3], width: v[2] - v[0], height: v[3] - v[1])
+    }
+}
+
+/// The ✨ button in the top-right corner of Music's window: one tap opens or closes the panel.
+@MainActor enum FloatingButton {
+    static var window: OrganizerPanel?
+    static let side: CGFloat = 36
+
+    static func make() {
+        let w = OrganizerPanel(contentRect: NSRect(x: 0, y: 0, width: side, height: side),
+                               styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        w.isOpaque = false
+        w.backgroundColor = .clear
+        w.hasShadow = true
+        w.level = .floating
+        w.isReleasedWhenClosed = false
+        w.hidesOnDeactivate = false
+        w.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
+        w.contentView = NSHostingView(rootView: SparkleButton().environmentObject(FloatingPanel.model))
+        window = w
+    }
+
+    static func place(in m: NSRect) {
+        guard let w = window else { return }
+        // Top-right of Music's window, in the toolbar strip; left of the panel's edge.
+        let origin = NSPoint(x: m.maxX - side - 14, y: m.maxY - side - 12)
+        if w.frame.origin != origin { w.setFrameOrigin(origin) }
+        if !w.isVisible { w.orderFrontRegardless() }
+    }
+}
+
+struct SparkleButton: View {
+    @EnvironmentObject var model: AppModel
+    @State private var hover = false
+    @State private var tapped = false
+    var body: some View {
+        Button {
+            tapped.toggle()
+            FloatingPanel.toggle()
+        } label: {
+            ZStack {
+                Circle().fill(brand)
+                Image(systemName: model.panelOpen ? "xmark" : "sparkles")
+                    .font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: tapped)
+            }
+            .frame(width: 32, height: 32)
+            .scaleEffect(hover ? 1.12 : 1)
+            .shadow(color: .pink.opacity(hover ? 0.6 : 0.3), radius: hover ? 8 : 4)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: hover)
+        }
+        .buttonStyle(.plain)
+        .frame(width: FloatingButton.side, height: FloatingButton.side)
+        .onHover { hover = $0 }
+        .help(model.panelOpen ? "Close Organizer" : "Open Organizer")
+    }
+}
+
+/// The Organizer panel, docked inside Music's window like a sidebar, under the ✨ button.
 @MainActor enum FloatingPanel {
     static var window: OrganizerPanel?
     static let model = AppModel()
     static var keyMonitor: Any?
-    static var follow: Timer?
+    static var isOpen = false
     static let size = NSSize(width: 400, height: 600)
-    static let musicID = "com.apple.Music"
 
-    /// Done with the organizer: quit (the app has no other window, menu bar or Dock icon).
-    static func close() { NSApp.terminate(nil) }
+    /// Quit completely (the ✨ button goes too, until the next login or Scripts menu → ✨ Organizer).
+    static func quit() { NSApp.terminate(nil) }
+
+    static func toggle() { isOpen ? hide() : show() }
+
+    static func hide() {
+        isOpen = false
+        model.panelOpen = false
+        guard let w = window else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.15
+            w.animator().alphaValue = 0
+        }, completionHandler: { Task { @MainActor in if !isOpen { w.orderOut(nil) } } })
+    }
 
     static func show() {
         // The panel lives in Music: bring Music forward if something else is in front.
-        if let music = NSRunningApplication.runningApplications(withBundleIdentifier: musicID).first, !music.isActive {
+        if let music = NSRunningApplication.runningApplications(withBundleIdentifier: MusicWatcher.musicID).first,
+           !music.isActive {
             music.activate()
         }
         let w = window ?? makeWindow()
+        isOpen = true
+        model.panelOpen = true
         model.home()
-        place(w, animate: false)
+        if let m = MusicWatcher.musicFrame() { place(w, in: m, animate: false) } else { placeOnScreen(w) }
         w.alphaValue = 0
         w.orderFrontRegardless()
         w.makeKey()
@@ -1172,60 +1299,35 @@ final class OrganizerPanel: NSPanel {
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
             let cmd = e.modifierFlags.contains(.command)
-            if e.keyCode == 53 || (cmd && ["q", "w"].contains(e.charactersIgnoringModifiers ?? "")) {
-                close()  // Esc, ⌘Q, ⌘W
+            if cmd && e.charactersIgnoringModifiers == "q" { quit(); return nil }        // ⌘Q quits
+            if e.keyCode == 53 || (cmd && e.charactersIgnoringModifiers == "w") {      // Esc, ⌘W hide
+                hide()
                 return nil
             }
             return e
         }
-        // Follow the Music window; hide when another app comes forward.
-        follow = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
-            Task { @MainActor in if let w = window, w.isVisible { place(w, animate: true) } }
-        }
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { note in
-            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            Task { @MainActor in
-                guard let w = window else { return }
-                if app?.bundleIdentifier == musicID {
-                    place(w, animate: false)
-                    w.orderFrontRegardless()
-                } else if app?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-                    w.orderOut(nil)
-                }
-            }
-        }
         return w
     }
 
-    /// Music's front window in Cocoa screen coordinates, if Music is running and has one.
-    static func musicFrame() -> NSRect? {
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: musicID).first != nil else { return nil }
-        let src = "tell application \"Music\" to if (count of browser windows) > 0 then get bounds of front browser window"
-        var err: NSDictionary?
-        guard let r = NSAppleScript(source: src)?.executeAndReturnError(&err), r.numberOfItems == 4,
-              let primary = NSScreen.screens.first else { return nil }
-        let v = (1...4).map { r.atIndex($0)?.doubleValue ?? 0 }  // left, top, right, bottom (top-left origin)
-        return NSRect(x: v[0], y: primary.frame.height - v[3], width: v[2] - v[0], height: v[3] - v[1])
-    }
-
-    /// Dock inside the right side of Music's window, just under its toolbar; beside it if it's narrow.
-    static func place(_ w: NSWindow, animate: Bool) {
+    /// Dock inside the right side of Music's window, under the ✨ button; beside it if it's narrow.
+    static func place(_ w: NSWindow, in m: NSRect, animate: Bool) {
         var frame = NSRect(origin: .zero, size: size)
-        if let m = musicFrame() {
-            frame.size.height = min(size.height, max(420, m.height - 76))
-            if m.width >= size.width + 420 {
-                frame.origin = NSPoint(x: m.maxX - size.width - 14, y: m.maxY - 62 - frame.height)
-            } else {
-                frame.origin = NSPoint(x: m.maxX + 8, y: m.maxY - frame.height)
-            }
-        } else if let screen = NSScreen.main?.visibleFrame {
-            frame.origin = NSPoint(x: screen.maxX - size.width - 20, y: screen.maxY - 20 - frame.height)
+        frame.size.height = min(size.height, max(420, m.height - 76))
+        if m.width >= size.width + 420 {
+            frame.origin = NSPoint(x: m.maxX - size.width - 14, y: m.maxY - 56 - frame.height)
+        } else {
+            frame.origin = NSPoint(x: m.maxX + 8, y: m.maxY - frame.height)
         }
         if abs(w.frame.origin.x - frame.origin.x) > 0.5 || abs(w.frame.origin.y - frame.origin.y) > 0.5
             || abs(w.frame.height - frame.height) > 0.5 {
             w.setFrame(frame, display: true, animate: animate)
         }
+    }
+
+    static func placeOnScreen(_ w: NSWindow) {
+        guard let screen = NSScreen.main?.visibleFrame else { return }
+        w.setFrame(NSRect(x: screen.maxX - size.width - 20, y: screen.maxY - 20 - size.height,
+                          width: size.width, height: size.height), display: true)
     }
 }
 
@@ -1247,13 +1349,18 @@ struct PoppingRoot: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
-        if CommandLine.arguments.contains("--preview") { Task { @MainActor in FloatingPanel.show() } }
+        Task { @MainActor in
+            FloatingButton.make()
+            MusicWatcher.start()
+            if CommandLine.arguments.contains("--preview") { FloatingPanel.show() }
+        }
     }
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "musicorganizer" {
             Task { @MainActor in
                 switch url.host {
-                case "quit": FloatingPanel.close()
+                case "quit": FloatingPanel.quit()
+                case "hide": FloatingPanel.hide()
                 case "describe":
                     FloatingPanel.show()
                     let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value

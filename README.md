@@ -20,11 +20,12 @@ plans, and only touches your library when you approve a plan.
 ## The Organizer panel (opened from Music)
 
 `python3 organizer.py install-app` builds a small SwiftUI app (the Xcode Command Line
-Tools are enough), installs it in `~/Applications`, and puts **✨ Organizer** in
-Music's Scripts menu (the scroll icon between Window and Help). Choosing it pops the
-Organizer panel into the right side of Music's window, like a sidebar: it follows the
-window, hides when you switch apps and comes back with Music. The app has no menu bar or Dock icon; closing the panel
-(red button, ⏻, Esc or ⌘Q) quits it, and the menu item starts it again.
+Tools are enough), installs it in `~/Applications` and starts it at login. While Music
+is in front, a **✨ button sits in the top-right corner of Music's window**: tap it to
+open the Organizer panel (docked inside the window like a sidebar), tap again or press
+Esc to close it. Both follow the Music window and hide when another app is in front.
+There's no menu bar or Dock icon. ⏻ or ⌘Q quits completely; `organizer.py remove-login`
+stops it starting at login. Music's Scripts menu → **✨ Organizer** opens it too.
 
 The panel reads what's open in Music and offers what fits. The main feature is
 **Describe a playlist**: type what you want ("hard gym rap like Kendrick, no slow

@@ -19,7 +19,8 @@ Usage:
   python3 organizer.py drop PLAN OP 2,7      Remove tracks from an op before approving it
   python3 organizer.py apply PLAN            Apply approved ops to Music, verify, log, write undo plan
   python3 organizer.py enrich [SOURCE...]    Add metadata: apple, audio, musicbrainz (default), lastfm (needs key)
-  python3 organizer.py install-app           Build and start the menu bar app (♫ icon)
+  python3 organizer.py install-app           Build the app: a ✨ button inside Music opens the Organizer
+  python3 organizer.py remove-login          Stop starting it at login
   python3 organizer.py install-scripts       Add the organizer's actions to Music's Scripts menu
   python3 organizer.py discover [--fresh]    Charting songs (or new releases) from lesser-known artists near your taste
 
@@ -442,6 +443,33 @@ def cmd_install_scripts(args):
 
 
 APP_DIR = Path.home() / "Applications" / "Music Organizer.app"
+LOGIN_LABEL = "com.srikarreddyram.musicorganizer"
+LOGIN_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LOGIN_LABEL}.plist"
+
+
+def launchctl(*args):
+    import os
+    import subprocess
+    return subprocess.run(["launchctl", *args[:1], f"gui/{os.getuid()}", *args[1:]], capture_output=True, text=True)
+
+
+def start_at_login():
+    """Start the app at login (so the ✨ button is in Music whenever Music is open) and now."""
+    import plistlib
+    LOGIN_PLIST.parent.mkdir(parents=True, exist_ok=True)
+    launchctl("bootout", str(LOGIN_PLIST))
+    with open(LOGIN_PLIST, "wb") as f:
+        plistlib.dump({"Label": LOGIN_LABEL, "ProgramArguments": [str(APP_DIR / "Contents" / "MacOS" / "MusicOrganizer")],
+                       "RunAtLoad": True, "ProcessType": "Interactive"}, f)
+    launchctl("bootstrap", str(LOGIN_PLIST))
+
+
+def cmd_remove_login(args):
+    import subprocess
+    launchctl("bootout", str(LOGIN_PLIST))
+    LOGIN_PLIST.unlink(missing_ok=True)
+    subprocess.run(["pkill", "-x", "MusicOrganizer"], capture_output=True)
+    print("Music Organizer no longer starts at login, and it's quit. Scripts menu → ✨ Organizer still opens it.")
 
 
 def cmd_install_app(args):
@@ -477,9 +505,15 @@ def cmd_install_app(args):
     subprocess.run(["codesign", "--force", "--sign", "-", str(APP_DIR)], capture_output=True)
     subprocess.run(["/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework"
                     "/Support/lsregister", "-f", str(APP_DIR)], capture_output=True)  # register the URL scheme
-    subprocess.run(["open", str(APP_DIR)])
     cmd_install_scripts(args)
-    print(f"\nInstalled {APP_DIR} and started it. In Music: Scripts menu (scroll icon) → ✨ Organizer.")
+    if getattr(args, "no_login", False):
+        subprocess.run(["open", str(APP_DIR)])
+    else:
+        start_at_login()
+    print(f"\nInstalled {APP_DIR} and started it. In Music, tap the ✨ button in the window's top-right corner"
+          " (or Scripts menu → ✨ Organizer).")
+    if not getattr(args, "no_login", False):
+        print("It starts at login so the ✨ button is always there; `organizer.py remove-login` turns that off.")
 
 
 def cmd_discover(args):
@@ -595,7 +629,10 @@ def main():
     u.set_defaults(fn=cmd_ui)
 
     sub.add_parser("install-scripts", help="add actions to Music's Scripts menu").set_defaults(fn=cmd_install_scripts)
-    sub.add_parser("install-app", help="build and start the menu bar app").set_defaults(fn=cmd_install_app)
+    ia = sub.add_parser("install-app", help="build and start the Organizer app (✨ button in Music)")
+    ia.add_argument("--no-login", action="store_true", help="don't start it at login")
+    ia.set_defaults(fn=cmd_install_app)
+    sub.add_parser("remove-login", help="stop starting the app at login, and quit it").set_defaults(fn=cmd_remove_login)
 
     en = sub.add_parser("enrich", help="add metadata from Apple's catalog and preview audio (uses the internet)")
     en.add_argument("sources", nargs="*", choices=["apple", "audio", "musicbrainz", "lastfm"], metavar="SOURCE")
