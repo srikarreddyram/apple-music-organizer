@@ -21,7 +21,7 @@ Usage:
   python3 organizer.py enrich [SOURCE...]    Add metadata: apple, audio, musicbrainz (default), lastfm (needs key)
   python3 organizer.py install-app           Build the app: a ✨ button inside Music opens the Organizer
   python3 organizer.py remove-login          Stop starting it at login
-  python3 organizer.py install-scripts       Add the organizer's actions to Music's Scripts menu
+  python3 organizer.py install-scripts       Optional: also put ✨ Organizer in Music's Scripts menu
   python3 organizer.py discover [--fresh]    Charting songs (or new releases) from lesser-known artists near your taste
 
 Nothing changes in Music except through `apply`, which only runs approved ops
@@ -469,7 +469,7 @@ def cmd_remove_login(args):
     launchctl("bootout", str(LOGIN_PLIST))
     LOGIN_PLIST.unlink(missing_ok=True)
     subprocess.run(["pkill", "-x", "MusicOrganizer"], capture_output=True)
-    print("Music Organizer no longer starts at login, and it's quit. Scripts menu → ✨ Organizer still opens it.")
+    print("Music Organizer no longer starts at login, and it's quit. Open it again with: open musicorganizer://show")
 
 
 def cmd_install_app(args):
@@ -505,13 +505,11 @@ def cmd_install_app(args):
     subprocess.run(["codesign", "--force", "--sign", "-", str(APP_DIR)], capture_output=True)
     subprocess.run(["/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework"
                     "/Support/lsregister", "-f", str(APP_DIR)], capture_output=True)  # register the URL scheme
-    cmd_install_scripts(args)
     if getattr(args, "no_login", False):
         subprocess.run(["open", str(APP_DIR)])
     else:
         start_at_login()
-    print(f"\nInstalled {APP_DIR} and started it. In Music, tap the ✨ button in the window's top-right corner"
-          " (or Scripts menu → ✨ Organizer).")
+    print(f"\nInstalled {APP_DIR} and started it. In Music, tap the ✨ button in the window's top-right corner.")
     if not getattr(args, "no_login", False):
         print("It starts at login so the ✨ button is always there; `organizer.py remove-login` turns that off.")
 
@@ -628,7 +626,8 @@ def main():
     u.add_argument("ids", nargs="*", metavar="TRACK_ID")
     u.set_defaults(fn=cmd_ui)
 
-    sub.add_parser("install-scripts", help="add actions to Music's Scripts menu").set_defaults(fn=cmd_install_scripts)
+    sub.add_parser("install-scripts", help="optional: also add ✨ Organizer to Music's Scripts menu").set_defaults(
+        fn=cmd_install_scripts)
     ia = sub.add_parser("install-app", help="build and start the Organizer app (✨ button in Music)")
     ia.add_argument("--no-login", action="store_true", help="don't start it at login")
     ia.set_defaults(fn=cmd_install_app)

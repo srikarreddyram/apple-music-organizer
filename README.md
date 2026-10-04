@@ -25,7 +25,8 @@ is in front, a **✨ button sits in the top-right corner of Music's window**: ta
 open the Organizer panel (docked inside the window like a sidebar), tap again or press
 Esc to close it. Both follow the Music window and hide when another app is in front.
 There's no menu bar or Dock icon. ⏻ or ⌘Q quits completely; `organizer.py remove-login`
-stops it starting at login. Music's Scripts menu → **✨ Organizer** opens it too.
+stops it starting at login. (`install-scripts` can also add ✨ Organizer to Music's Scripts
+menu; it isn't installed by default.)
 
 The panel reads what's open in Music and offers what fits. The main feature is
 **Describe a playlist**: type what you want ("hard gym rap like Kendrick, no slow
