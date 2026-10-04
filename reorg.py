@@ -94,10 +94,15 @@ def split_ops(lib, playlist, min_size=10, used=None, min_family=4, rare=0.15, do
     fam = {pid: labels.FAMILY.get(eff[pid]["style"], "other") for pid in labelled}
     counts = Counter(fam.values())
     main, main_n = counts.most_common(1)[0] if counts else (None, 0)
-    # Only a playlist with one clear sound has misfits; a deliberately mixed one doesn't.
-    misfit = {f for f, n in counts.items()
-              if f != main and f not in COMPATIBLE.get(main, set()) and n / len(labelled) < rare} \
-        if labelled and main_n / len(labelled) >= dominant else set()
+    # A playlist with one clear sound is split by vibe, with misfits pulled out. A mixed one
+    # (no sound is half of it) is split by sound first, then loud vs quiet inside each sound:
+    # splitting a mixed playlist by vibe alone put AC/DC, Boney M. and Despacito together.
+    mixed = bool(labelled) and main_n / len(labelled) < dominant
+    if mixed:
+        misfit = set(counts)
+    else:
+        misfit = {f for f, n in counts.items()
+                  if f != main and f not in COMPATIBLE.get(main, set()) and n / len(labelled) < rare}
 
     groups = OrderedDict((b, []) for b in BUCKETS)
     family_groups, left_out = OrderedDict(), []
@@ -117,9 +122,12 @@ def split_ops(lib, playlist, min_size=10, used=None, min_family=4, rare=0.15, do
         else:
             groups[bucket(eff[pid])].append(pid)
     parts = OrderedDict()
+    # In a mixed playlist each sound becomes its own playlist, so keep them meaningful: no tiny
+    # ones, and loud songs (energy 4-5) apart from calmer ones.
+    need, spread = (max(min_family, 5), 1) if mixed else (min_family, 2)
     for f, ids in family_groups.items():
-        for k, part in enumerate(coherent_parts(ids, eff)):
-            if len(part) >= min_family:
+        for k, part in enumerate(coherent_parts(ids, eff, max_spread=spread)):
+            if len(part) >= need:
                 parts[f if k == 0 else f"{f}-{k}"] = (f, part)
             else:
                 left_out += part
@@ -159,8 +167,10 @@ def split_ops(lib, playlist, min_size=10, used=None, min_family=4, rare=0.15, do
             add_group(f"{source}-{b}", ids, b, b, ABOUT[b], b)
     for key, (f, ids) in parts.items():
         vibe = Counter(bucket(eff[i]) for i in ids).most_common(1)[0][0]
-        add_group(f"{source}-{key}", ids, vibe, FAMILY_LABEL.get(f, f),
-                  f"{FAMILY_LABEL.get(f, f).lower()} songs that don't blend with the rest", f)
+        lo, hi = min(eff[i]["energy"] for i in ids), max(eff[i]["energy"] for i in ids)
+        about = (f"{FAMILY_LABEL.get(f, f).lower()} songs, energy {lo}-{hi}" if mixed
+                 else f"{FAMILY_LABEL.get(f, f).lower()} songs that don't blend with the rest")
+        add_group(f"{source}-{key}", ids, vibe, FAMILY_LABEL.get(f, f), about, f)
     if unlabelled:
         ops.append({"op": "create_playlist", "name": f"{source} · Unsorted", "ref": f"{source}-unsorted",
                     "reason": "tracks with no labels yet"})

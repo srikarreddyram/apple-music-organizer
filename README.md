@@ -26,8 +26,11 @@ Organizer panel into the right side of Music's window, like a sidebar: it follow
 window, hides when you switch apps and comes back with Music. The app has no menu bar or Dock icon; closing the panel
 (red button, ⏻, Esc or ⌘Q) quits it, and the menu item starts it again.
 
-The panel reads what's open in Music and offers what fits: split any playlist by
-vibe, "Where do these belong?" and "Discover" for selected songs, artist playlists,
+The panel reads what's open in Music and offers what fits. The main feature is
+**Describe a playlist**: type what you want ("hard gym rap like Kendrick, no slow
+songs", "late night Telugu melodies") and it picks songs from your library, keeping to
+one sound, for you to check before anything is created. It also has: split any playlist
+(by sound first, then energy), "Where do these belong?" and "Discover" for selected songs, artist playlists,
 review & apply with names for new playlists, and undo from the result screen. It talks
 to the organizer through `organizer.py api ...` (JSON), so it uses the same plans,
 checks, audit log and undo as everything else.
@@ -39,7 +42,8 @@ python3 organizer.py scan                 # read the library (read-only)
 python3 organizer.py report               # playlists, duplicates, overlap, genres
 python3 organizer.py enrich               # Apple catalog match, preview audio, MusicBrainz
 python3 organizer.py enrich lastfm        # listener tags; needs LASTFM_API_KEY=... in .env
-python3 organizer.py split "Calling"      # plan vibe playlists from a big mixed one
+python3 organizer.py api describe hard gym rap, no slow songs   # what the Describe screen runs
+python3 organizer.py split "Calling"      # plan playlists from a big one (sound first, then energy)
 python3 organizer.py artist "Travis Scott"
 python3 organizer.py suggest              # artist-playlist gaps, homes for unplaylisted songs
 python3 organizer.py discover [--fresh]   # charting now (or new releases) near your taste
@@ -62,9 +66,12 @@ always picking the biggest playlist. Run `evaluate` to measure it on yours.
 
 ## How splits decide, and how far to trust them
 
-Splits put each song in a vibe group (Gym, Party, Cruise, Feels, Late Night) from
-its energy, mood and context labels; songs that don't fit the playlist's main sound
-(folk in a pop playlist) get their own group or stay put. `evaluate` checks the
+A playlist with one clear sound is split into vibe groups (Gym, Party, Cruise, Feels,
+Late Night) from energy, mood and context labels; songs that don't fit its main sound
+(folk in a pop playlist) get their own group or stay put. A mixed playlist is split by
+sound first, then loud vs calm within each sound; sounds with only a few songs stay in
+the original. (The first version split mixed playlists by vibe alone and put AC/DC,
+Boney M. and Despacito in one playlist; the author rightly called that garbage.) `evaluate` checks the
 result against measured preview audio, which the split never looks at: so far groups
 sound only slightly more alike than random groups from the same playlist (about
 x1.1 overall, some groups below x1.0). Data-driven clustering and similarity-based

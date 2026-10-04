@@ -236,6 +236,43 @@ def cmd_discover(args):
                        "known": p.get("known"), "because": p.get("because") or []} for p in result["picks"]]}
 
 
+# --- Describe a playlist -------------------------------------------------------------
+
+DESCRIBE_CACHE = ui.DATA / "ui_describe.json"
+
+
+def cmd_describe(args):
+    import describe
+    text = " ".join(args).strip()
+    if not text:
+        return {"error": "Describe the playlist you want, e.g. “hard gym rap, no slow songs”."}
+    lib = ui.load_lib()
+    progress("Reading your description")
+    r = describe.build(lib, text)
+    DESCRIBE_CACHE.write_text(json.dumps({"text": text, "ids": [t["persistentID"] for t, _ in r["picks"]],
+                                          "why": [w for _, w in r["picks"]]}, ensure_ascii=False))
+    return {"text": text, "chips": r["constraints"]["chips"],
+            "picks": [dict(track_info(t), i=i, why=why, year=t.get("year"))
+                      for i, (t, why) in enumerate(r["picks"])]}
+
+
+def cmd_describe_create(args):
+    """Request: {"keep": [pick index, ...]} for the last `describe` result."""
+    import describe
+    req = read_request()
+    cached = json.loads(DESCRIBE_CACHE.read_text())
+    lib = ui.load_lib()
+    tracks = {t["persistentID"]: t for t in lib["tracks"]}
+    keep = set(req.get("keep", []))
+    picks = [(tracks[tid], why) for i, (tid, why) in enumerate(zip(cached["ids"], cached["why"]))
+             if i in keep and tid in tracks]
+    if not picks:
+        return {"error": "Keep at least one song."}
+    plan = plans.new_plan(f"New playlist: {cached['text']}", describe.plan_ops(lib, cached["text"], picks), lib)
+    plans.save_plan(plan)
+    return {"plan": plan_view(plan)}
+
+
 # --- Move Song ---------------------------------------------------------------------
 
 def cmd_move_options(args):
@@ -300,7 +337,7 @@ def cmd_refresh(args):
 COMMANDS = {
     "context": cmd_context, "playlists": cmd_playlists, "plans": cmd_plans, "plan": cmd_plan, "apply": cmd_apply, "undo": cmd_undo,
     "belong": cmd_belong, "add": cmd_add, "split": cmd_split, "artist": cmd_artist,
-    "artist-create": cmd_artist_create, "fill": cmd_fill, "discover": cmd_discover,
+    "artist-create": cmd_artist_create, "describe": cmd_describe, "describe-create": cmd_describe_create, "fill": cmd_fill, "discover": cmd_discover,
     "move-options": cmd_move_options, "move": cmd_move, "refresh": cmd_refresh,
 }
 

@@ -41,6 +41,8 @@ struct MoveTarget: Decodable, Identifiable { let id, name, group: String }
 struct MoveGroup: Decodable, Identifiable { var id: String { home.id }; let home: Sel2Home; let source: String; let tracks: [Sel2]; let targets: [MoveTarget] }
 struct Sel2Home: Decodable { let id, name: String }
 struct MoveResp: Decodable { let groups: [MoveGroup] }
+struct DescribePick: Decodable, Identifiable { var id: Int { i }; let i: Int; let name, artist, why: String; let year: Int? }
+struct DescribeResp: Decodable { let text: String; let chips: [String]; let picks: [DescribePick] }
 struct PlaylistRow: Decodable, Identifiable { let id, name: String; let size, labelled: Int; let canSplit: Bool }
 struct PlaylistsResp: Decodable { let playlists: [PlaylistRow] }
 struct RefreshResp: Decodable, Hashable { let tracks, new, unlabelled: Int }
@@ -111,7 +113,7 @@ enum Backend {
 
 enum Screen: Equatable {
     case home, plans, plan(PlanView), belong, artist, discover, move, result(ApplyResp, String), refresh(RefreshResp?)
-    case pickPlaylist
+    case pickPlaylist, describe
 }
 
 @MainActor final class AppModel: ObservableObject {
@@ -122,6 +124,7 @@ enum Screen: Equatable {
     @Published var error: String?
     @Published var pendingCount = 0
     @Published var popToken = 0
+    @Published var pendingDescribe: String?  // from musicorganizer://describe?q=...
 
     func go(_ s: Screen) {
         withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) { back.append(screen); screen = s }
@@ -250,6 +253,7 @@ struct RootView: View {
                 case .result(let r, let title): ResultView(result: r, title: title)
                 case .refresh(let r): RefreshView(result: r)
                 case .pickPlaylist: PickPlaylistView()
+                case .describe: DescribeView()
                 }
             }
             .padding(16)
@@ -282,7 +286,7 @@ struct RootView: View {
         switch model.screen {
         case .home: "home"; case .plans: "plans"; case .plan(let p): "plan-\(p.id)"; case .belong: "belong"
         case .artist: "artist"; case .discover: "discover"; case .move: "move"; case .result(let r, _): "result-\(r.plan ?? "")"
-        case .refresh: "refresh"; case .pickPlaylist: "pick"
+        case .refresh: "refresh"; case .pickPlaylist: "pick"; case .describe: "describe"
         }
     }
 }
@@ -400,9 +404,8 @@ struct HomeView: View {
         var out: [AnyView] = []
         let c = model.ctx
         if let p = c?.playlist, p.canSplit {
-            out.append(AnyView(ActionCard(icon: "square.split.2x2.fill", title: "Split “\(p.name)” by vibe",
-                                          subtitle: "\(p.size) songs into Gym, Party, Cruise, Feels and Late Night playlists. The original stays.",
-                                          hero: true) {
+            out.append(AnyView(ActionCard(icon: "square.split.2x2.fill", title: "Split “\(p.name)”",
+                                          subtitle: "\(p.size) songs, grouped by sound and energy. The original stays.") {
                 Task {
                     if let r = await model.run(PlanResp.self, "Sorting \(p.name) by vibe…", "split", [p.id]) { model.go(.plan(r.plan)) }
                 }
@@ -412,7 +415,7 @@ struct HomeView: View {
         if !sel.isEmpty {
             let what = sel.count == 1 ? "“\(sel[0].name)”" : "these \(sel.count) songs"
             out.append(AnyView(ActionCard(icon: "rectangle.stack.badge.plus", title: "Where does \(what) belong?",
-                                          subtitle: "Playlists that fit, from songs that sound and feel alike", hero: c?.playlist?.canSplit != true) {
+                                          subtitle: "Playlists that fit, from songs that sound and feel alike") {
                 model.go(.belong)
             }))
             out.append(AnyView(ActionCard(icon: "sparkle.magnifyingglass", title: "Discover songs like \(sel.count == 1 ? "this" : "these")",
@@ -420,8 +423,11 @@ struct HomeView: View {
             out.append(AnyView(ActionCard(icon: "arrow.left.arrow.right", title: "Move to another split playlist",
                                           subtitle: "For songs in a playlist the organizer made") { model.go(.move) }))
         }
-        out.append(AnyView(ActionCard(icon: "square.split.2x2", title: "Split a playlist by vibe",
-                                      subtitle: "Pick any of your playlists", hero: c?.playlist?.canSplit != true && sel.isEmpty) {
+        out.insert(AnyView(ActionCard(icon: "text.bubble.fill", title: "Describe a playlist",
+                                      subtitle: "Say what you want to hear; I'll pick the songs for you to check",
+                                      hero: true) { model.go(.describe) }), at: 0)
+        out.append(AnyView(ActionCard(icon: "square.split.2x2", title: "Split a playlist",
+                                      subtitle: "By sound first, then energy. You check every song first") {
             model.go(.pickPlaylist)
         }))
         out.append(AnyView(ActionCard(icon: "checklist", title: "Review & apply changes",
@@ -440,7 +446,7 @@ struct HomeView: View {
         if sel.isEmpty && c?.playlist?.canSplit != true {
             out.insert(AnyView(HStack(spacing: 8) {
                 Image(systemName: "hand.point.up.left.fill").foregroundStyle(brand)
-                Text("Tip: select songs in Music to find where they belong, or split any playlist below.")
+                Text("Tip: select songs in Music to see where they belong.")
                     .font(.caption).foregroundStyle(.secondary)
             }.card()), at: 0)
         }
@@ -604,6 +610,128 @@ struct PlanDetailView: View {
     }
 }
 
+// MARK: - Describe a playlist -----------------------------------------------------------
+
+struct Chip: View {
+    let text: String; var filled = false
+    var body: some View {
+        Text(text).font(.caption.weight(.semibold)).lineLimit(1)
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(Capsule().fill(filled ? AnyShapeStyle(brand) : AnyShapeStyle(.white.opacity(0.1))))
+            .foregroundStyle(filled ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+    }
+}
+
+/// Wrapping row of chips.
+struct FlowRow: Layout {
+    var spacing: CGFloat = 6
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 360
+        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x + s.width > width, x > 0 { x = 0; y += rowH + spacing; rowH = 0 }
+            x += s.width + spacing; rowH = max(rowH, s.height)
+        }
+        return CGSize(width: width, height: y + rowH)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowH: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x + s.width > bounds.maxX, x > bounds.minX { x = bounds.minX; y += rowH + spacing; rowH = 0 }
+            v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(s))
+            x += s.width + spacing; rowH = max(rowH, s.height)
+        }
+    }
+}
+
+struct DescribeView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var text = ""
+    @State private var result: DescribeResp?
+    @State private var keep: Set<Int> = []
+    @FocusState private var focused: Bool
+    let examples = ["Hard gym rap, no slow songs", "Late night Telugu melodies", "Sad indie for 2am",
+                    "2010s boyband pop to sing along", "Anirudh mass bangers", "Chill R&B, no Drake"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Header(title: "Describe a playlist", subtitle: "Sound, mood, artists, language, era…")
+            HStack(alignment: .top) {
+                Image(systemName: "text.bubble").foregroundStyle(brand).padding(.top, 2)
+                TextField("e.g. hard gym rap like Kendrick, no slow songs", text: $text, axis: .vertical)
+                    .textFieldStyle(.plain).lineLimit(1...3).focused($focused).onSubmit(go)
+                if !text.isEmpty {
+                    Button(action: go) { Image(systemName: "arrow.up.circle.fill").font(.title2).foregroundStyle(brand) }
+                        .buttonStyle(.plain).transition(.scale.combined(with: .opacity))
+                }
+            }
+            .card(focused)
+            .animation(.spring(response: 0.3), value: text.isEmpty)
+
+            if let r = result {
+                FlowRow { ForEach(r.chips, id: \.self) { Chip(text: $0, filled: true) } }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                HStack {
+                    Text(r.picks.isEmpty ? "Nothing in your library matches that yet." :
+                         "\(keep.count) of \(r.picks.count) songs, tap to drop any")
+                        .font(.caption).foregroundStyle(.secondary).contentTransition(.numericText())
+                    Spacer()
+                }
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 4) {
+                        ForEach(r.picks) { p in
+                            Button { withAnimation(.spring(response: 0.3)) { if keep.contains(p.i) { keep.remove(p.i) } else { keep.insert(p.i) } } } label: {
+                                HStack(spacing: 10) {
+                                    Check(on: keep.contains(p.i))
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(p.name).font(.callout.weight(.semibold)).lineLimit(1)
+                                            .strikethrough(!keep.contains(p.i), color: .secondary)
+                                        Text("\(p.artist) · \(p.why)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .opacity(keep.contains(p.i) ? 1 : 0.45)
+                                .contentShape(Rectangle()).padding(.vertical, 4).padding(.horizontal, 6)
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+                BrandButton(title: "Create playlist with \(keep.count) songs", icon: "music.note.list", enabled: !keep.isEmpty) {
+                    Task {
+                        if let p = await model.run(PlanResp.self, "Preparing your playlist…", "describe-create", body: ["keep": Array(keep)]) {
+                            model.go(.plan(p.plan))
+                        }
+                    }
+                }
+            } else {
+                Text("Try one of these:").font(.caption).foregroundStyle(.secondary)
+                FlowRow {
+                    ForEach(examples, id: \.self) { e in
+                        Button { text = e; go() } label: { Chip(text: e) }.buttonStyle(.plain)
+                    }
+                }
+                Spacer()
+            }
+        }
+        .onAppear {
+            focused = true
+            if let q = model.pendingDescribe { model.pendingDescribe = nil; text = q; go() }
+        }
+    }
+
+    func go() {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        Task {
+            if let r = await model.run(DescribeResp.self, "Picking songs for “\(t)”…", "describe", t.components(separatedBy: " ")) {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { result = r; keep = Set(r.picks.map(\.i)) }
+            }
+        }
+    }
+}
+
 // MARK: - Pick a playlist ------------------------------------------------------------
 
 struct PickPlaylistView: View {
@@ -613,7 +741,7 @@ struct PickPlaylistView: View {
     var shown: [PlaylistRow] { query.isEmpty ? rows : rows.filter { $0.name.localizedCaseInsensitiveContains(query) } }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Header(title: "Split a playlist", subtitle: "Into Gym, Party, Cruise, Feels and Late Night. The original stays.")
+            Header(title: "Split a playlist", subtitle: "Grouped by sound, then energy. The original stays.")
             HStack {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search playlists", text: $query).textFieldStyle(.plain)
@@ -997,6 +1125,10 @@ final class OrganizerPanel: NSPanel {
     static func close() { NSApp.terminate(nil) }
 
     static func show() {
+        // The panel lives in Music: bring Music forward if something else is in front.
+        if let music = NSRunningApplication.runningApplications(withBundleIdentifier: musicID).first, !music.isActive {
+            music.activate()
+        }
         let w = window ?? makeWindow()
         model.home()
         place(w, animate: false)
@@ -1119,7 +1251,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "musicorganizer" {
-            Task { @MainActor in url.host == "quit" ? FloatingPanel.close() : FloatingPanel.show() }
+            Task { @MainActor in
+                switch url.host {
+                case "quit": FloatingPanel.close()
+                case "describe":
+                    FloatingPanel.show()
+                    let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value
+                    FloatingPanel.model.pendingDescribe = q
+                    FloatingPanel.model.go(.describe)
+                default: FloatingPanel.show()
+                }
+            }
         }
     }
 }
